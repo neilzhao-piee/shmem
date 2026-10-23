@@ -1,0 +1,16 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m py_compile tools/*.py
+      - run: find . -name '*.sh' -not -path './.git/*' -exec bash -n {} +
+      - run: |
+          SHMEM_ROOT=examples python3 tools/memory-search.py --full "restic" | grep -q journal
+          SHMEM_ROOT=examples python3 tools/memory-search.py --full "备份 prune" | grep -q journal
+          cd examples && bash ../tools/make-digest.sh

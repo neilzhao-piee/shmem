@@ -5,6 +5,8 @@
 
 [English](README.md) · [中文](README.zh.md)
 
+![ci](https://github.com/neilzhao-piee/shmem/actions/workflows/ci.yml/badge.svg)
+
 You run several AI agents. They each have amnesia. The usual fix — a memory service
 with a vector index — adds a daemon, an API, a database, and a second source of truth
 that can drift from what the agents actually believe.

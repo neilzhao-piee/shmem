@@ -5,6 +5,8 @@
 
 [English](README.md) · [中文](README.zh.md)
 
+![ci](https://github.com/neilzhao-piee/shmem/actions/workflows/ci.yml/badge.svg)
+
 你跑着好几个 AI agent，它们各自失忆。常规解法——一个带向量索引的记忆服务——会引入
 daemon、API、数据库，以及一份会跟 agent 真实记忆漂移的"第二真相"。
 

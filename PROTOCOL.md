@@ -107,8 +107,11 @@ shared automatically:
   never touched. See `integrations/dsh/update-agents-block.sh`.
 - **Agent with a hook** (e.g. hermes `pre_llm_call`): the hook refreshes `DIGEST.md` and
   injects it **once per session**. See `integrations/hermes/inject-shared-memory.sh`.
-- **Agent with MCP**: point its MCP client at `tools/memory-search.py --mcp`; tools
-  `memory_search` and `memory_stats`.
+- **Agent with MCP**: point its MCP client at `tools/memory-search.py --mcp`; read tools
+  `memory_search` and `memory_stats`. Write tools `memory_write` (facts rewrite),
+  `memory_append` (journal append under `.lock`) and `inbox_write` (≤ 20 lines) are
+  exposed only with `--allow-write`; they enforce the three channels, the secret guard
+  (refuses, never writes), and slug rules, then re-index the changed file.
 - **Sandboxed agent**: paste/upload the digest. That's the whole integration.
 
 ## Automation (the summarizer)

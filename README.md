@@ -82,14 +82,14 @@ wire its injection door:
 |---|---|
 | a bootstrap file (DSH `AGENTS.md`, Claude `CLAUDE.md`, …) | `integrations/dsh/update-agents-block.sh` — maintains a marker-delimited block in the file |
 | a session hook (hermes `pre_llm_call`) | `integrations/hermes/inject-shared-memory.sh` — injects the digest once per session |
-| MCP | `tools/memory-search.py --mcp` (stdio; tools `memory_search`, `memory_stats`) |
+| MCP | `tools/memory-search.py --mcp` (stdio; read tools `memory_search`, `memory_stats`; write tools `memory_write`, `memory_append`, `inbox_write` only with `--allow-write`) |
 | nothing (sandboxed) | paste/upload `DIGEST.md` — that's the whole integration |
 
 ## The tools
 
 | tool | what it does | deps |
 |---|---|---|
-| `tools/memory-search.py` | FTS5 index over the markdown; **CJK character-bigram tokenizer** (no jieba); incremental re-index by content hash; returns snippets with file + line numbers; CLI **and** MCP stdio server; optional vector layer (RRF fusion, off by default) | Python 3 stdlib |
+| `tools/memory-search.py` | FTS5 index over the markdown; **CJK character-bigram tokenizer** (no jieba); incremental re-index by content hash; returns snippets with file + line numbers; CLI **and** MCP stdio server; optional vector layer (RRF fusion, off by default); MCP write tools (three channels, flock, secret guard) only with `--allow-write` | Python 3 stdlib |
 | `tools/summarize-sessions.py` | daily harvest: incremental scan of agent session history → model extracts durable facts → appended to `journal/` under `flock`; quality gate (≤6 lines, no invented dates, no credential patterns); keyword fallback when the model is down; pluggable session adapters (DSH + hermes included) | Python 3 stdlib |
 | `tools/make-digest.sh` | builds `DIGEST.md` (≤9KB): INDEX head + facts sketch + newest auto-summaries + latest private-memory snapshot | bash + awk (portable reversal, no `tac`) |
 | `integrations/dsh/update-agents-block.sh` | refreshes the auto-injected block in DSH's `AGENTS.md` between markers | bash + awk |

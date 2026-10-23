@@ -14,6 +14,7 @@ Usage:
   memory-search.py --rebuild
   memory-search.py --stats
   memory-search.py --mcp            # stdio MCP server: tools/list + tools/call
+  memory-search.py --mcp --allow-write   # also expose the three write tools
 
 Env:
   SHMEM_ROOT            memory directory to index (default: current working directory)
@@ -32,7 +33,13 @@ import sqlite3
 import struct
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+
+try:
+    import fcntl  # POSIX advisory locking for the journal append channel
+except ImportError:
+    fcntl = None  # Windows: write tools refuse to run rather than corrupt the channel
 
 SM = Path(os.environ.get("SHMEM_ROOT", os.getcwd())).resolve()
 DB = Path(os.environ.get("SHMEM_DB", str(SM / ".index" / "memory.db")))
@@ -257,8 +264,71 @@ def stats(con):
     return {"docs": n, "files": files, "embeddings": emb, "db": str(DB), "vector_enabled": bool(EMBED_BASE and EMBED_MODEL)}
 
 
+# ---------- Write face (three channels, protocol-enforced; MCP-only, opt-in) ----------
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+
+
+def now():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(os.environ.get("SHMEM_TZ", "UTC")))
+    except Exception:
+        return datetime.now()
+
+
+def secret_hit(text):
+    """Reason string if this text must never enter memory, else None."""
+    m = SECRET_RE.search(text)
+    if m:
+        return f"secret pattern ({m.group(0)[:40]!r})"
+    for v in cred_values():
+        if v and v in text:
+            return "credential value from SHMEM_SECRET_FILES"
+    return None
+
+
+def channel_write(con, kind, args):
+    """Apply one write through its protocol channel. Returns (ok, message)."""
+    if fcntl is None:
+        return False, "write tools require POSIX flock; unavailable on this platform"
+    if kind == "memory_write":
+        topic, content = args.get("topic", ""), args.get("content", "")
+        if not SLUG.match(topic):
+            return False, f"topic must be a kebab slug (facts/<topic>.md), got {topic!r}"
+        target = SM / "facts" / f"{topic}.md"
+        mode, payload = "w", content
+    elif kind == "memory_append":
+        entry = args.get("entry", "")
+        target = SM / "journal" / f"{now():%Y-%m}.md"
+        mode, payload = "a", f"\n## {now():%Y-%m-%d}\n\n{entry}\n"
+    elif kind == "inbox_write":
+        agent, content = args.get("agent", ""), args.get("content", "")
+        if not SLUG.match(agent):
+            return False, f"agent must be a kebab slug (inbox/TO-<agent>.md), got {agent!r}"
+        if content.count("\n") + 1 > 20:
+            return False, "inbox message must be <= 20 lines"
+        target = SM / "inbox" / f"TO-{agent}.md"
+        mode, payload = "w", content
+    else:
+        return False, f"unknown write channel {kind!r}"
+    hit = secret_hit(payload)
+    if hit:
+        return False, f"refused: {hit} — never write secrets, only their location"
+    lock_path = SM / ".lock"
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, mode, encoding="utf-8") as f:
+                f.write(payload)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+    sync(con)  # incremental re-index of the changed file only
+    return True, f"wrote {target.relative_to(SM)}"
+
+
 # ---------- MCP face (minimal stdio JSON-RPC, no deps) ----------
-def mcp_loop():
+def mcp_loop(allow_write=False):
     con = open_db()
     tools = [{"name": "memory_search",
               "description": f"Query the shared memory (markdown at {SM}). Returns passages with file path and line numbers.",
@@ -266,6 +336,19 @@ def mcp_loop():
                               "required": ["query"]}},
              {"name": "memory_stats", "description": "Index size and whether the vector layer is active.",
               "inputSchema": {"type": "object", "properties": {}}}]
+    if allow_write:
+        tools += [
+            {"name": "memory_write",
+             "description": "Rewrite facts/<topic>.md in place (current truth only). Refuses content matching the secret guard.",
+             "inputSchema": {"type": "object", "properties": {"topic": {"type": "string"}, "content": {"type": "string"}},
+                             "required": ["topic", "content"]}},
+            {"name": "memory_append",
+             "description": "Append a dated section to journal/<YYYY-MM>.md under the protocol lock.",
+             "inputSchema": {"type": "object", "properties": {"entry": {"type": "string"}}, "required": ["entry"]}},
+            {"name": "inbox_write",
+             "description": "Overwrite inbox/TO-<agent>.md (<= 20 lines: conclusion + pointers + ask).",
+             "inputSchema": {"type": "object", "properties": {"agent": {"type": "string"}, "content": {"type": "string"}},
+                             "required": ["agent", "content"]}}]
 
     def reply(obj):
         sys.stdout.write(json.dumps(obj) + "\n")
@@ -297,6 +380,14 @@ def mcp_loop():
             elif name == "memory_stats":
                 sync(con)
                 content = json.dumps(stats(con), ensure_ascii=False)
+            elif name in ("memory_write", "memory_append", "inbox_write"):
+                if not allow_write:
+                    reply({"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"unknown tool {name}"}})
+                    continue
+                ok, msg = channel_write(con, name, args)
+                reply({"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": msg}],
+                        "isError": not ok}})
+                continue
             else:
                 reply({"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"unknown tool {name}"}})
                 continue
@@ -315,6 +406,8 @@ def main():
     ap.add_argument("--full", action="store_true", help="drop the index and rebuild from scratch")
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--mcp", action="store_true", help="run as stdio MCP server")
+    ap.add_argument("--allow-write", action="store_true",
+                    help="with --mcp: expose memory_write / memory_append / inbox_write (default face is read-only)")
     a = ap.parse_args()
 
     con = open_db()
@@ -328,7 +421,7 @@ def main():
     if a.stats:
         print(json.dumps(stats(con), ensure_ascii=False, indent=1)); did = True
     if a.mcp:
-        mcp_loop(); return
+        mcp_loop(allow_write=a.allow_write); return
     if not a.query:
         if not did:
             ap.print_help()

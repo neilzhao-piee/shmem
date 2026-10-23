@@ -1,0 +1,12 @@
+[Unit]
+Description=Aggregate recent agent conversation history into the shmem journal
+
+[Service]
+Type=oneshot
+Environment=SHMEM_ROOT=@SHMEM_ROOT@
+# Optional: point at your model and secret files (see config.example.env).
+#EnvironmentFile=/etc/shmem.env
+ExecStart=/usr/bin/python3 @SHMEM_ROOT@/tools/summarize-sessions.py
+# Optional: refresh an agent-specific auto-injected block after summarizing, e.g. for DSH:
+#ExecStartPost=/bin/bash @SHMEM_ROOT@/integrations/dsh/update-agents-block.sh
+Nice=10

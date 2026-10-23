@@ -1,0 +1,17 @@
+# derived state — disposable by design
+.index/
+.summarize-state.json
+.summarize.log
+.hook.log
+.agent-mem.sha
+.hermes-mem.sha
+
+# generated output
+DIGEST.md
+
+# python
+__pycache__/
+*.pyc
+
+# OS junk
+.DS_Store

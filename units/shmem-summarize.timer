@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily shmem conversation summarizer
+
+[Timer]
+# Local time; change to suit your agents' idle hours.
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=600
+Persistent=true
+Unit=shmem-summarize.service
+
+[Install]
+WantedBy=timers.target

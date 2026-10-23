@@ -1,0 +1,23 @@
+restic	facts/fleet.md
+ZFS pool snapshot	facts/fleet.md
+NTP drift build1	facts/fleet.md
+VLAN iot	facts/fleet.md
+dashboard port 8090	facts/fleet.md
+iot-relay allowlist	facts/fleet.md
+credentials location only	facts/fleet.md
+sandboxed agent digest	facts/agents.md
+MCP search tool	facts/agents.md
+summarizer keyword fallback	facts/agents.md
+never assume wrote	facts/agents.md
+备份 prune 窗口	journal/2026-01.md
+池子 守卫	journal/2026-01.md
+suspend disables NTP	journal/2026-01.md
+prune timer overlap	journal/2026-01.md
+dashboard moved tank	journal/2026-01.md
+rotated monthly	journal/2026-01.md
+private memory snapshot	journal/2026-01.md
+off-peak backups	journal/2026-01.md
+rewrite in place	INDEX.md
+read this page first	INDEX.md
+old build1 alias dead	inbox/TO-agent-b.md
+zzqx nonexistent	[]

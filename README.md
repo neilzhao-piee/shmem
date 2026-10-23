@@ -91,9 +91,10 @@ wire its injection door:
 |---|---|---|
 | `tools/memory-search.py` | FTS5 index over the markdown; **CJK character-bigram tokenizer** (no jieba); incremental re-index by content hash; returns snippets with file + line numbers; CLI **and** MCP stdio server; optional vector layer (RRF fusion, off by default) | Python 3 stdlib |
 | `tools/summarize-sessions.py` | daily harvest: incremental scan of agent session history → model extracts durable facts → appended to `journal/` under `flock`; quality gate (≤6 lines, no invented dates, no credential patterns); keyword fallback when the model is down; pluggable session adapters (DSH + hermes included) | Python 3 stdlib |
-| `tools/make-digest.sh` | builds `DIGEST.md` (≤9KB): INDEX head + facts sketch + newest auto-summaries + latest private-memory snapshot | bash + coreutils (`tac`) |
+| `tools/make-digest.sh` | builds `DIGEST.md` (≤9KB): INDEX head + facts sketch + newest auto-summaries + latest private-memory snapshot | bash + awk (portable reversal, no `tac`) |
 | `integrations/dsh/update-agents-block.sh` | refreshes the auto-injected block in DSH's `AGENTS.md` between markers | bash + awk |
-| `integrations/hermes/snapshot-memory.sh` | appends the other agent's private `MEMORY.md`/`USER.md` to the journal when they change | bash + sha256sum + flock |
+| `integrations/hermes/snapshot-memory.sh` | appends the other agent's private `MEMORY.md`/`USER.md` to the journal when they change | bash + sha256sum/shasum + flock (python3 fallbacks) |
+| `eval/run.sh` | recall harness over committed synthetic fixtures (23 pairs incl. CJK + a no-match honesty case); every search change must keep it at 100% — this is the CI gate | bash + python3 |
 | `integrations/hermes/inject-shared-memory.sh` | hermes `pre_llm_call` hook: refresh digest, snapshot memory, inject once per session | bash + python3 |
 
 Configuration lives in environment variables (see [`config.example.env`](config.example.env)) —

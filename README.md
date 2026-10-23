@@ -54,6 +54,8 @@ PROTOCOL.md         the protocol itself — read this first
 
 ## Quickstart
 
+Runs on Linux and macOS: Python 3.9+ (stdlib only) and sqlite3 with FTS5 (Apple's system sqlite3 already includes FTS5). On macOS, the Makefile needs GNU make (`brew install make`, then `gmake`), and scheduling uses a launchd agent instead of the systemd timer (`units/launchd.example.plist`).
+
 ```sh
 git clone <this repo> && cd shmem
 

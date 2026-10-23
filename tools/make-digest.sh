@@ -1,7 +1,8 @@
 #!/bin/bash
 # Regenerate DIGEST.md in the shmem root: a single self-contained snapshot that
 # works for file-capable agents (read it) AND for sandboxed agents (upload/paste it).
-# Requires GNU coreutils (tac).
+# Portable line reversal (GNU-only tac and BSD-only tail -r both fail cross-platform).
+rev_lines() { awk '{a[NR]=$0} END{for(i=NR;i>=1;i--) print a[i]}' "$@"; }
 set -uo pipefail
 export TZ="${SHMEM_TZ:-UTC}"
 ROOT="${SHMEM_ROOT:-.}"
@@ -28,7 +29,7 @@ tmp=$(mktemp)
   echo "## Recent activity (auto-summary, newest first)"
   for f in journal/*.md; do
     [ -r "$f" ] || continue
-    tac "$f" | awk '/^### auto-summary/{c++} c<6' | tac | head -c 1500
+    rev_lines "$f" | awk '/^### auto-summary/{c++} c<6' | rev_lines | head -c 1500
   done
   echo
   echo "## Private memory snapshots (most recent)"

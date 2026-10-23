@@ -14,7 +14,13 @@ mem="$MEM_DIR/MEMORY.md"
 usr="$MEM_DIR/USER.md"
 [ -r "$mem" ] || exit 0
 
-cur=$( { sha256sum "$mem"; [ -r "$usr" ] && sha256sum "$usr"; } | sha256sum | cut -d' ' -f1 )
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"
+  else python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$@"
+  fi
+}
+cur=$( { sha256 "$mem"; [ -r "$usr" ] && sha256 "$usr"; } | sha256 | cut -d' ' -f1 )
 state="$ROOT/.agent-mem.sha"
 old=$(cat "$state" 2>/dev/null || true)
 if [ "$cur" = "$old" ]; then
@@ -37,7 +43,12 @@ tmp=$(mktemp)
   echo '```'
 } > "$tmp"
 
-flock -x "$ROOT/.lock" -c "cat '$tmp' >> '$file'"
+if command -v flock >/dev/null 2>&1; then
+  flock -x "$ROOT/.lock" -c "cat '$tmp' >> '$file'"
+else
+  # BSD/macOS has no flock(1); fcntl.flock is equivalent and python3 is already a dependency.
+  python3 -c 'import fcntl,sys; lf=open(sys.argv[1],"a"); fcntl.flock(lf,fcntl.LOCK_EX); lf.write(open(sys.argv[2],"rb").read()); lf.close()' "$ROOT/.lock" "$tmp"
+fi
 rm -f "$tmp"
 printf '%s\n' "$cur" > "$state"
 echo "snapshot appended to $file"

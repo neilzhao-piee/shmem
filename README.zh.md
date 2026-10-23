@@ -49,6 +49,8 @@ PROTOCOL.md         协议本体——先读这个
 
 ## 快速上手
 
+Linux 和 macOS 都能跑：只需 Python 3.9+（纯标准库）和带 FTS5 的 sqlite3（macOS 系统自带的已含 FTS5）。macOS 上 Makefile 需要 GNU make（`brew install make` 后用 `gmake`），定时任务用 launchd agent 代替 systemd timer（见 `units/launchd.example.plist`）。
+
 ```sh
 git clone <本仓库> && cd shmem
 

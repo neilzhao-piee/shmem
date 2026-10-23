@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS equivalent of units/shmem-summarize.timer (systemd is Linux-only).
+     Replace /path/to/memory, save as ~/Library/LaunchAgents/com.shmem.summarize.plist,
+     then: launchctl load ~/Library/LaunchAgents/com.shmem.summarize.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.shmem.summarize</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>python3</string>
+    <string>/path/to/memory/tools/summarize-sessions.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SHMEM_ROOT</key><string>/path/to/memory</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+</dict>
+</plist>

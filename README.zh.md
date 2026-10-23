@@ -89,6 +89,7 @@ make install-units DIR=~/my-memory     # systemd user timer，本地 05:30 跑
 | `integrations/dsh/update-agents-block.sh` | 在 DSH 的 `AGENTS.md` 标记区间里刷新自动注入块 | bash + awk |
 | `integrations/hermes/snapshot-memory.sh` | 对方 agent 的私有 `MEMORY.md`/`USER.md` 变化时追加进 journal | bash + sha256sum/shasum + flock（有 python3 回退） |
 | `eval/run.sh` | 对提交进仓库的合成样例跑 recall 测试（23 对，含中文和"查不到不许编"的诚实用例）；任何检索改动必须保持 100%——这就是 CI 门槛 | bash + python3 |
+| `tests/test_shmem.py` | 协议强制部分的单元测试：中文二元组切分、secret guard（模式 + 凭证值）、slug 规则、三条写通道、默认只读面 | Python 3 标准库 |
 | `integrations/hermes/inject-shared-memory.sh` | hermes `pre_llm_call` hook：刷新 digest、快照记忆、每会话注入一次 | bash + python3 |
 
 配置全部走环境变量（见 [`config.example.env`](config.example.env)）——没有任何硬编码。

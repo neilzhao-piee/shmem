@@ -6,6 +6,7 @@
 #   make digest                     regenerate DIGEST.md
 #   make index                      (re)build the FTS5 index
 #   make summarize                  one manual summarizer run
+#   make test                       run the unit tests
 #   make install-units DIR=~/my-memory   install the systemd user timer
 #
 # ROOT defaults to the directory containing this Makefile.
@@ -15,7 +16,7 @@ export SHMEM_ROOT := $(ROOT)
 export SHMEM_TZ ?= UTC
 PYTHON ?= python3
 
-.PHONY: new search index digest summarize stats install-units clean
+.PHONY: new search index digest summarize stats test install-units clean
 
 new: ## scaffold a new memory tree from examples/
 	@test -n "$(DIR)" || { echo "usage: make new DIR=/path/to/memory"; exit 1; }
@@ -42,6 +43,9 @@ summarize: ## one manual summarizer run (incremental)
 
 stats: ## index stats
 	$(PYTHON) $(ROOT)/tools/memory-search.py --stats
+
+test: ## run unit tests (stdlib unittest, CI gate)
+	$(PYTHON) $(ROOT)/tests/test_shmem.py
 
 install-units: ## install systemd user timer (DIR = memory root, defaults to ROOT)
 	@dest="$$HOME/.config/systemd/user"; mkdir -p "$$dest"

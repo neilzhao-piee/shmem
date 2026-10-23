@@ -328,8 +328,7 @@ def channel_write(con, kind, args):
 
 
 # ---------- MCP face (minimal stdio JSON-RPC, no deps) ----------
-def mcp_loop(allow_write=False):
-    con = open_db()
+def mcp_tools(allow_write=False):
     tools = [{"name": "memory_search",
               "description": f"Query the shared memory (markdown at {SM}). Returns passages with file path and line numbers.",
               "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
@@ -349,6 +348,12 @@ def mcp_loop(allow_write=False):
              "description": "Overwrite inbox/TO-<agent>.md (<= 20 lines: conclusion + pointers + ask).",
              "inputSchema": {"type": "object", "properties": {"agent": {"type": "string"}, "content": {"type": "string"}},
                              "required": ["agent", "content"]}}]
+    return tools
+
+
+def mcp_loop(allow_write=False):
+    con = open_db()
+    tools = mcp_tools(allow_write)
 
     def reply(obj):
         sys.stdout.write(json.dumps(obj) + "\n")

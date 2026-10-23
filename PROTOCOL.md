@@ -16,6 +16,13 @@ agent that can read and write files.
    only counts when it is *delivered* (inbox file + one explicit sentence, or an injection
    hook fired). Never assume "I wrote it, so they saw it".
 
+## Platform scope
+
+POSIX only (Linux and macOS): `fcntl.flock`, `flock(1)`, and systemd/launchd are part of
+the reference implementation. **Windows is out of scope** — the write tools refuse to run
+there rather than improvise a second locking model. The protocol itself is
+platform-neutral; only this reference implementation carries this scope.
+
 ## Directory layout
 
 ```

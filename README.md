@@ -95,6 +95,7 @@ wire its injection door:
 | `integrations/dsh/update-agents-block.sh` | refreshes the auto-injected block in DSH's `AGENTS.md` between markers | bash + awk |
 | `integrations/hermes/snapshot-memory.sh` | appends the other agent's private `MEMORY.md`/`USER.md` to the journal when they change | bash + sha256sum/shasum + flock (python3 fallbacks) |
 | `eval/run.sh` | recall harness over committed synthetic fixtures (23 pairs incl. CJK + a no-match honesty case); every search change must keep it at 100% — this is the CI gate | bash + python3 |
+| `tests/test_shmem.py` | unit tests for the protocol-enforcing parts: CJK bigrams, secret guard (pattern + credential values), slug rules, three write channels, read-only default face | Python 3 stdlib |
 | `integrations/hermes/inject-shared-memory.sh` | hermes `pre_llm_call` hook: refresh digest, snapshot memory, inject once per session | bash + python3 |
 
 Configuration lives in environment variables (see [`config.example.env`](config.example.env)) —

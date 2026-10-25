@@ -6,6 +6,7 @@ Run: python3 tests/test_shmem.py   (or: make test)
 import importlib.util
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,9 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("shmem", ROOT / "tools" / "memory-search.py")
 shmem = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(shmem)
+sum_spec = importlib.util.spec_from_file_location("shmem_summarize", ROOT / "tools" / "summarize-sessions.py")
+summ = importlib.util.module_from_spec(sum_spec)
+sum_spec.loader.exec_module(summ)
 
 
 class ShmemTest(unittest.TestCase):
@@ -89,6 +93,21 @@ class ShmemTest(unittest.TestCase):
                          ["memory_search", "memory_stats"])
         self.assertEqual(sorted(t["name"] for t in shmem.mcp_tools(allow_write=True)),
                          ["inbox_write", "memory_append", "memory_search", "memory_stats", "memory_write"])
+
+    def test_quiet_guard_skips_growing_sessions(self):
+        now = time.time()
+        self.assertTrue(summ.quiet_skip("%d:100" % int(now), now))
+        self.assertFalse(summ.quiet_skip("%d:100" % (int(now) - 3600), now))
+        self.assertFalse(summ.quiet_skip("42", now))  # non-mtime marker: not guarded
+
+    def test_dedup_identical_block(self):
+        journal = shmem.SM / "journal" / "2026-10.md"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        block = "### auto-summary · 2026-10-25 · dsh · t\n- fact one\n"
+        journal.write_text("\n" + block, encoding="utf-8")
+        seen = summ.seen_blocks(str(journal))
+        self.assertIn(block, seen)
+        self.assertNotIn("### auto-summary · 2026-10-25 · dsh · t\n- fact two\n", seen)
 
 
 if __name__ == "__main__":

@@ -134,6 +134,9 @@ Conversation history is the largest source of durable facts, so a scheduled job
 - **Quality gate**: only `- `-prefixed bullet lines survive; lines inventing dates outside
   the session's year are dropped; lines containing credential patterns are dropped; at most
   6 lines per session.
+- **Quiet-session guard + dedup**: a session written to within the last 10 minutes is
+  skipped without advancing its marker (summarized once it has settled), and a fact block
+  identical to one already in the journal is never re-appended.
 - **Discipline boundary**: summaries go to `journal/` **only**. The summarizer never touches
   `facts/` — curated truth is still written by an agent, deliberately.
 

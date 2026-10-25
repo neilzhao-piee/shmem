@@ -24,6 +24,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import time
 import urllib.request
 from datetime import datetime, timezone
 from fcntl import LOCK_EX, LOCK_UN, flock
@@ -48,6 +49,7 @@ MAX_SESSIONS_PER_RUN = 12
 MAX_TRANSCRIPT_CHARS = 3500
 MAX_OUTPUT_BYTES = 4000
 MIN_CONTENT_CHARS = 300
+QUIET_SECONDS = int(os.environ.get("SHMEM_QUIET_SECONDS", "600"))
 
 DECISION_RE = re.compile(
     r"(决定|改用|改成|确认|已部署|部署到|修复|根因|版本|commit|路径|端口|约定|规则|不能|必须|限制|发现|验证"
@@ -77,6 +79,29 @@ def save_state(state):
             json.dump(state, fh)
     except Exception as exc:
         log("state write failed: %s" % exc)
+
+
+def quiet_skip(marker, now=None):
+    """True if the marker is mtime-based and the session was written recently.
+
+    A still-growing session would be re-summarized on every run; skipping it
+    without advancing the marker defers it to the next run. Non-mtime markers
+    (e.g. highest message id) are not guarded.
+    """
+    try:
+        mtime = int(str(marker).split(":")[0])
+    except ValueError:
+        return False
+    return (now if now is not None else time.time()) - mtime < QUIET_SECONDS
+
+
+def seen_blocks(journal_path):
+    """Existing auto-summary blocks in the journal, for dedup."""
+    try:
+        with open(journal_path, encoding="utf-8") as fh:
+            return set(re.findall(r"### auto-summary[^\n]*\n(?:- .*\n)*", fh.read()))
+    except OSError:
+        return set()
 
 
 NOISE_PREFIX = (
@@ -262,6 +287,7 @@ def main():
     month = datetime.now(TZ).strftime("%Y-%m")
     os.makedirs(os.path.join(ROOT, "journal"), exist_ok=True)
     journal = os.path.join(ROOT, "journal", "%s.md" % month)
+    seen = seen_blocks(journal)
     processed = written = 0
     if not ENDPOINT or not MODEL:
         log("no SUMMARIZE_MODEL_URL/SUMMARIZE_MODEL configured — using keyword fallback only")
@@ -273,6 +299,8 @@ def main():
             sid = "%s:%s" % (agent, key)
             if state.get(sid) == marker:
                 continue
+            if quiet_skip(marker):
+                continue  # still growing; marker not advanced, picked up next run
             if len(transcript) < MIN_CONTENT_CHARS:
                 state[sid] = marker
                 continue
@@ -294,6 +322,10 @@ def main():
                 break
             safe_title = SECRET_RE.sub("[redacted]", title or "")[:120]
             block = "\n### auto-summary · %s · %s · %s\n%s\n" % (date, agent, safe_title, facts)
+            key_block = block.lstrip("\n")
+            if key_block in seen:
+                continue  # identical facts already delivered
+            seen.add(key_block)
             with open(LOCK, "w") as lf:
                 flock(lf, LOCK_EX)
                 try:

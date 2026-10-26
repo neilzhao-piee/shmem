@@ -84,7 +84,7 @@ make install-units DIR=~/my-memory     # systemd user timer，本地 05:30 跑
 | 工具 | 干什么 | 依赖 |
 |---|---|---|
 | `tools/memory-search.py` | 对 markdown 建 FTS5 索引；**中文按字符二元组切分**（不依赖 jieba）；按内容哈希增量重建索引；返回片段 + 文件 + 行号；CLI **和** MCP stdio 服务两种面；可选向量层（RRF 融合，默认关）；MCP 写工具（三通道 + flock + secret guard）仅在 `--allow-write` 时开放 | Python 3 标准库 |
-| `tools/summarize-sessions.py` | 每日收割：增量扫描 agent 会话历史 → 模型抽取持久事实 → 在 `flock` 下追加进 `journal/`；质量闸门（≤6 行、不编日期、不含凭据模式）；模型挂了退回关键词抽取；会话源可插拔（内置 DSH + hermes 两个 adapter） | Python 3 标准库 |
+| `tools/summarize-sessions.py` | 每日收割：增量扫描 agent 会话历史 → 模型抽取持久事实 → 在 `flock` 下追加进 `journal/`；质量闸门（≤6 行、不编日期、不含凭据模式）；quiet guard + 去重（`SHMEM_QUIET_SECONDS`=600——仍在增长的会话结算后才摘要，逐字相同的块不再重复追加）；模型挂了退回关键词抽取；会话源可插拔（内置 DSH + hermes 两个 adapter） | Python 3 标准库 |
 | `tools/make-digest.sh` | 生成 `DIGEST.md`（≤9KB）：INDEX 头部 + facts 速览 + 最新自动摘要 + 最近私有记忆快照 | bash + awk（可移植反转，不依赖 `tac`） |
 | `integrations/dsh/update-agents-block.sh` | 在 DSH 的 `AGENTS.md` 标记区间里刷新自动注入块 | bash + awk |
 | `integrations/hermes/snapshot-memory.sh` | 对方 agent 的私有 `MEMORY.md`/`USER.md` 变化时追加进 journal | bash + sha256sum/shasum + flock（有 python3 回退） |

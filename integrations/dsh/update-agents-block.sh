@@ -15,11 +15,20 @@ AGENTS="${DSH_AGENTS_MD:-$HOME/.dsh/AGENTS.md}"
 MARK_BEGIN='<!-- BEGIN AUTO-INJECTED (shmem-summarizer) -->'
 MARK_END='<!-- END AUTO-INJECTED (shmem-summarizer) -->'
 
-journal=$(ls -1 "$ROOT"/journal/*.md 2>/dev/null | sort | tail -1)
-[ -n "$journal" ] || exit 0
+journals=$(ls -1 "$ROOT"/journal/*.md 2>/dev/null | sort)
+[ -n "$journals" ] || exit 0
+journal=$(printf '%s\n' "$journals" | tail -1)   # newest file: drives "recent activity"
 
-snap=$(awk '/^## .*private memory snapshot/{block=$0; keep=1; next} keep{block=block"\n"$0} END{print block}' \
-  "$journal" | awk 'NF' | cut -c1-160 | head -6)
+# Snapshot lookup walks newest -> oldest: private-memory snapshots are appended only
+# when an agent's memory file changes, so a fresh month's journal may not have one yet.
+# A real snapshot from the previous journal beats the "(no snapshot yet)" placeholder;
+# the placeholder is used only when no journal file holds any snapshot.
+snap=""
+while IFS= read -r f; do
+  snap=$(awk '/^## .*private memory snapshot/{block=$0; keep=1; next} keep{block=block"\n"$0} END{print block}' \
+    "$f" | awk 'NF' | cut -c1-160 | head -6)
+  [ -n "$snap" ] && break
+done < <(printf '%s\n' "$journals" | sort -r)
 recent=$(awk '
   { lines[NR] = $0 }
   /^### auto-summary/ { hdr[NR] = 1 }

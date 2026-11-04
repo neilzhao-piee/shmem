@@ -5,6 +5,7 @@ Run: python3 tests/test_shmem.py   (or: make test)
 """
 import importlib.util
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -108,6 +109,40 @@ class ShmemTest(unittest.TestCase):
         seen = summ.seen_blocks(str(journal))
         self.assertIn(block, seen)
         self.assertNotIn("### auto-summary · 2026-10-25 · dsh · t\n- fact two\n", seen)
+
+
+    def run_agents_block(self, journals):
+        jr = shmem.SM / "journal"
+        jr.mkdir(parents=True, exist_ok=True)
+        for name, body in journals.items():
+            (jr / name).write_text(body, encoding="utf-8")
+        agents = shmem.SM / "AGENTS.md"
+        agents.write_text("# hand-written instructions\n", encoding="utf-8")
+        env = dict(os.environ, SHMEM_ROOT=str(shmem.SM), DSH_AGENTS_MD=str(agents),
+                   HOME=str(shmem.SM), SHMEM_TZ="UTC")
+        r = subprocess.run(["bash", str(ROOT / "integrations" / "dsh" / "update-agents-block.sh")],
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return agents.read_text(encoding="utf-8")
+
+    def test_agents_block_snapshot_falls_back_to_older_journal(self):
+        # Fresh month without a snapshot must not blank the section: the previous
+        # journal's real snapshot wins over the placeholder.
+        out = self.run_agents_block({
+            "2026-10.md": "\n## 2026-10-31 23:00 private memory snapshot (auto)\n```\nOLD MEMORY LINE\n```\n",
+            "2026-11.md": "\n### auto-summary · 2026-11-01 · dsh · t\n- new fact\n",
+        })
+        self.assertIn("OLD MEMORY LINE", out)
+        self.assertNotIn("no snapshot yet", out)
+        self.assertIn("- new fact", out)          # recent activity still comes from the newest journal
+
+    def test_agents_block_placeholder_when_no_snapshot_anywhere(self):
+        out = self.run_agents_block({
+            "2026-10.md": "\n### auto-summary · 2026-10-01 · dsh · t\n- older fact\n",
+            "2026-11.md": "\n### auto-summary · 2026-11-01 · dsh · t\n- new fact\n",
+        })
+        self.assertIn("(no snapshot yet)", out)
+        self.assertIn("- new fact", out)
 
 
 if __name__ == "__main__":

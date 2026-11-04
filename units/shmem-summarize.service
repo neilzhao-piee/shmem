@@ -7,6 +7,11 @@ Environment=SHMEM_ROOT=@SHMEM_ROOT@
 # Optional: point at your model and secret files (see config.example.env).
 #EnvironmentFile=/etc/shmem.env
 ExecStart=/usr/bin/python3 @SHMEM_ROOT@/tools/summarize-sessions.py
-# Optional: refresh an agent-specific auto-injected block after summarizing, e.g. for DSH:
+# Optional follow-up steps, in this order (each runs only if the previous one succeeded):
+# 1) snapshot an agent's private memory into the journal, e.g. for hermes:
+#ExecStartPost=/bin/bash @SHMEM_ROOT@/integrations/hermes/snapshot-memory.sh
+# 2) rebuild DIGEST.md so injected blocks see fresh snapshots and summaries:
+#ExecStartPost=/bin/bash @SHMEM_ROOT@/tools/make-digest.sh
+# 3) refresh an agent-specific auto-injected block, e.g. for DSH:
 #ExecStartPost=/bin/bash @SHMEM_ROOT@/integrations/dsh/update-agents-block.sh
 Nice=10

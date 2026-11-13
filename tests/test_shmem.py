@@ -144,6 +144,19 @@ class ShmemTest(unittest.TestCase):
         self.assertIn("(no snapshot yet)", out)
         self.assertIn("- new fact", out)
 
+    def test_agents_block_snapshot_keeps_entries_beyond_the_second(self):
+        # Stale facts hide below the first two entries; the injected slice must keep
+        # every entry's opening (clip per line, drop the "§" separators) so a rewrite
+        # of entry 3 or 4 is visible in AGENTS.md instead of being silently truncated.
+        out = self.run_agents_block({
+            "2026-11.md": "\n## 2026-11-08 09:58 private memory snapshot (auto)\n```\n"
+                         "[MEMORY.md]\nTOKEN ONE\n§\nTOKEN TWO\n§\nTOKEN THREE stale model\n"
+                         "[USER.md]\nTOKEN USER\n```\n",
+        })
+        self.assertIn("TOKEN ONE", out)
+        self.assertIn("TOKEN THREE stale model", out)
+        self.assertIn("TOKEN USER", out)
+
 
 if __name__ == "__main__":
     unittest.main()

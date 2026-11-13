@@ -23,10 +23,23 @@ journal=$(printf '%s\n' "$journals" | tail -1)   # newest file: drives "recent a
 # when an agent's memory file changes, so a fresh month's journal may not have one yet.
 # A real snapshot from the previous journal beats the "(no snapshot yet)" placeholder;
 # the placeholder is used only when no journal file holds any snapshot.
+#
+# The slice keeps the opening of every memory entry, not only the first two: stale
+# facts tend to hide further down the list, and an entry that never reaches AGENTS.md
+# is invisible to the agent reading it. The "§" separator lines are dropped (they cost
+# a line each) and each entry is clipped, so the slice stays a pointer, not a copy.
 snap=""
 while IFS= read -r f; do
-  snap=$(awk '/^## .*private memory snapshot/{block=$0; keep=1; next} keep{block=block"\n"$0} END{print block}' \
-    "$f" | awk 'NF' | cut -c1-160 | head -6)
+  snap=$(awk '
+    /^## .*private memory snapshot/ { block = $0; keep = 1; fence = 0; next }
+    keep && fence >= 2 { keep = 0 }
+    keep && /^## / { keep = 0 }
+    keep {
+      block = block "\n" $0
+      if ($0 ~ /^```/) fence++
+    }
+    END { print block }
+  ' "$f" | awk 'NF' | awk '$0 != "§" && $0 !~ /^```/' | cut -c1-140 | head -12)
   [ -n "$snap" ] && break
 done < <(printf '%s\n' "$journals" | sort -r)
 recent=$(awk '

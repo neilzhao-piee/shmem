@@ -114,6 +114,10 @@ def chunk_file(path, secrets):
 def open_db():
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB)
+    # Two agents searching a fresh memory index concurrently both run sync() on the
+    # same file; without these pragmas the loser of the race gets "database is locked".
+    con.execute("PRAGMA busy_timeout=5000")
+    con.execute("PRAGMA journal_mode=WAL")
     con.execute("""CREATE TABLE IF NOT EXISTS docs(
         id INTEGER PRIMARY KEY, path TEXT, start_line INT, end_line INT,
         heading TEXT, text TEXT, mtime REAL, sha TEXT)""")
@@ -123,16 +127,22 @@ def open_db():
     return con
 
 
+def remove_indexed(con, path):
+    """Drop all index rows for one file path. Returns the number of chunks removed."""
+    ids = [r[0] for r in con.execute("SELECT id FROM docs WHERE path=?", (path,)).fetchall()]
+    if ids:
+        con.executemany("DELETE FROM fts WHERE rowid=?", ((i,) for i in ids))
+        con.executemany("DELETE FROM embed WHERE doc_id=?", ((i,) for i in ids))
+    con.execute("DELETE FROM docs WHERE path=?", (path,))
+    return len(ids)
+
+
 def index_file(con, path, secrets, vector=False):
     raw = path.read_bytes()
     h = hashlib.sha256(raw).hexdigest()
     mtime = path.stat().st_mtime
     con.execute("INSERT OR REPLACE INTO files(path,hash,mtime) VALUES(?,?,?)", (str(path), h, mtime))
-    ids = [r[0] for r in con.execute("SELECT id FROM docs WHERE path=?", (str(path),)).fetchall()]
-    if ids:
-        con.executemany("DELETE FROM fts WHERE rowid=?", ((i,) for i in ids))
-        con.executemany("DELETE FROM embed WHERE doc_id=?", ((i,) for i in ids))
-    con.execute("DELETE FROM docs WHERE path=?", (str(path),))
+    remove_indexed(con, str(path))
     n = 0
     for p, s, e, heading, text in chunk_file(path, secrets):
         sha = f"{s}-{e}"
@@ -156,18 +166,26 @@ def md_files():
 
 
 def sync(con, vector=False):
-    """Re-index only files whose content hash changed (cheap for typical memory sizes)."""
+    """Index files that changed and prune files that vanished since the last run.
+
+    Renamed or deleted markdown must not leave ghost chunks behind: search results
+    that point at paths which no longer exist are worse than a cache miss."""
+    on_disk = {str(p) for p in md_files()}
     changed = [p for p in md_files()
                if (row := con.execute("SELECT hash FROM files WHERE path=?", (str(p),)).fetchone()) is None
                or row[0] != hashlib.sha256(p.read_bytes()).hexdigest()]
-    if not changed:
-        return 0
+    gone = [r[0] for r in con.execute("SELECT path FROM files").fetchall() if r[0] not in on_disk]
+    if not changed and not gone:
+        return 0, 0
     secrets = cred_values()
-    n = 0
+    indexed = 0
+    for path in gone:
+        remove_indexed(con, path)
+        con.execute("DELETE FROM files WHERE path=?", (path,))
     for path in changed:
-        n += index_file(con, path, secrets, vector)
+        indexed += index_file(con, path, secrets, vector)
     con.commit()
-    return n
+    return indexed, len(gone)
 
 
 def rebuild(con, vector=False):
@@ -243,18 +261,20 @@ def search(query, limit=8, vector=False, con=None):
     own = con is None
     if own:
         con = open_db()
-    sync(con, vector)
-    bm = bm25(con, query, limit)
-    vv = vector_recall(con, query, limit) if vector else []
-    ids = fuse(bm, vv, limit) if vv else [(rid, 1.0 / (i + 1)) for i, (rid, _s) in enumerate(bm)]
-    out = []
-    for rid, score in ids:
-        path, s, e, heading, text = doc_row(con, rid)
-        out.append({"path": path, "lines": [s, e], "heading": heading,
-                    "score": round(score, 4), "text": text})
-    if own:
-        con.close()
-    return out
+    try:
+        sync(con, vector)
+        bm = bm25(con, query, limit)
+        vv = vector_recall(con, query, limit) if vector else []
+        ids = fuse(bm, vv, limit) if vv else [(rid, 1.0 / (i + 1)) for i, (rid, _s) in enumerate(bm)]
+        out = []
+        for rid, score in ids:
+            path, s, e, heading, text = doc_row(con, rid)
+            out.append({"path": path, "lines": [s, e], "heading": heading,
+                        "score": round(score, 4), "text": text})
+        return out
+    finally:
+        if own:
+            con.close()
 
 
 def stats(con):
@@ -353,6 +373,13 @@ def mcp_tools(allow_write=False):
 
 def mcp_loop(allow_write=False):
     con = open_db()
+    try:
+        _mcp_loop(con, allow_write)
+    finally:
+        con.close()
+
+
+def _mcp_loop(con, allow_write=False):
     tools = mcp_tools(allow_write)
 
     def reply(obj):
@@ -415,32 +442,37 @@ def main():
                     help="with --mcp: expose memory_write / memory_append / inbox_write (default face is read-only)")
     a = ap.parse_args()
 
+    if a.mcp:
+        mcp_loop(allow_write=a.allow_write)
+        return
+
     con = open_db()
     did = False
-    if a.full:
-        n = rebuild(con, vector=a.vector)
-        print(f"rebuilt {n} chunks"); did = True
-    elif a.rebuild:
-        n = sync(con, vector=a.vector)
-        print(f"re-indexed {n} chunks (changed files only)"); did = True
-    if a.stats:
-        print(json.dumps(stats(con), ensure_ascii=False, indent=1)); did = True
-    if a.mcp:
-        mcp_loop(allow_write=a.allow_write); return
-    if not a.query:
-        if not did:
-            ap.print_help()
-        return
-    res = search(a.query, a.limit, a.vector, con=con)
-    if a.json:
-        print(json.dumps(res, ensure_ascii=False, indent=1))
-    elif not res:
-        print("(no match — do not invent memory)")
-    else:
-        for r in res:
-            print(f"{r['path']}:{r['lines'][0]}-{r['lines'][1]}  [{r['heading']}]  {r['score']}")
-            print(r["text"])
-            print()
+    try:
+        if a.full:
+            n = rebuild(con, vector=a.vector)
+            print(f"rebuilt {n} chunks"); did = True
+        elif a.rebuild:
+            indexed, pruned = sync(con, vector=a.vector)
+            print(f"re-indexed {indexed} chunks, pruned {pruned} (changed or deleted files)"); did = True
+        if a.stats:
+            print(json.dumps(stats(con), ensure_ascii=False, indent=1)); did = True
+        if not a.query:
+            if not did:
+                ap.print_help()
+            return
+        res = search(a.query, a.limit, a.vector, con=con)
+        if a.json:
+            print(json.dumps(res, ensure_ascii=False, indent=1))
+        elif not res:
+            print("(no match — do not invent memory)")
+        else:
+            for r in res:
+                print(f"{r['path']}:{r['lines'][0]}-{r['lines'][1]}  [{r['heading']}]  {r['score']}")
+                print(r["text"])
+                print()
+    finally:
+        con.close()
 
 
 if __name__ == "__main__":

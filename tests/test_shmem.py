@@ -53,6 +53,7 @@ class ShmemTest(unittest.TestCase):
 
     def test_write_channels(self):
         con = shmem.open_db()
+        self.addCleanup(con.close)
         ok, _ = shmem.channel_write(con, "memory_write",
                                     {"topic": "fleet", "content": "# Fleet\n\n- box B runs CRM.\n"})
         self.assertTrue(ok)
@@ -69,6 +70,7 @@ class ShmemTest(unittest.TestCase):
 
     def test_write_refusals(self):
         con = shmem.open_db()
+        self.addCleanup(con.close)
         ok, _ = shmem.channel_write(con, "memory_write",
                                     {"topic": "x", "content": "password: hunter2secretvalue"})
         self.assertFalse(ok)
@@ -81,6 +83,7 @@ class ShmemTest(unittest.TestCase):
 
     def test_no_flock_platform_refuses(self):
         con = shmem.open_db()
+        self.addCleanup(con.close)
         real = shmem.fcntl
         shmem.fcntl = None
         try:
@@ -156,6 +159,26 @@ class ShmemTest(unittest.TestCase):
         self.assertIn("TOKEN ONE", out)
         self.assertIn("TOKEN THREE stale model", out)
         self.assertIn("TOKEN USER", out)
+
+    def test_sync_prunes_deleted_files(self):
+        # A deleted or renamed journal must not keep matching: ghost results pointing
+        # at vanished paths are worse than a cache miss.
+        jr = shmem.SM / "journal"
+        jr.mkdir(parents=True)
+        gone = jr / "2026-01.md"
+        gone.write_text("# Journal\n\nzebra-crm was decided on the whiteboard.\n", encoding="utf-8")
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        self.assertTrue([r for r in shmem.search("zebra-crm", con=con) if "2026-01" in r["path"]])
+        gone.unlink()
+        shmem.sync(con)
+        self.assertEqual([r for r in shmem.search("zebra-crm", con=con) if "2026-01" in r["path"]], [])
+
+    def test_db_concurrency_pragmas(self):
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+        self.assertGreaterEqual(con.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
 
 
 if __name__ == "__main__":

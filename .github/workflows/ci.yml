@@ -10,9 +10,9 @@ jobs:
           python-version: "3.11"
       - run: python3 -m py_compile tools/*.py
       - run: find . -name '*.sh' -not -path './.git/*' -exec bash -n {} +
-      - run: python3 tests/test_shmem.py
+      - run: python3 -W error::ResourceWarning tests/test_shmem.py
       - run: bash eval/run.sh
       - run: |
-          SHMEM_ROOT=examples python3 tools/memory-search.py --full "restic" | grep -q journal
-          SHMEM_ROOT=examples python3 tools/memory-search.py --full "备份 prune" | grep -q journal
+          SHMEM_ROOT=examples python3 -W error::ResourceWarning tools/memory-search.py --full "restic" | grep -q journal
+          SHMEM_ROOT=examples python3 -W error::ResourceWarning tools/memory-search.py --full "备份 prune" | grep -q journal
           cd examples && bash ../tools/make-digest.sh

@@ -15,3 +15,11 @@ __pycache__/
 
 # OS junk
 .DS_Store
+
+# auto-sync safety net: never let credentials reach this repo
+.env
+.env.*
+*.pw
+*.pem
+*.key
+credentials*

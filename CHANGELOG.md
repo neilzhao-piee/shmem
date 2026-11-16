@@ -5,15 +5,13 @@ itself evolves only through explicit `PROTOCOL.md` revisions.
 
 ## [Unreleased]
 
+### Added
+- CI: Python matrix 3.9 / 3.11 / 3.13 (matching the declared minimum),
+  `shellcheck -S warning` over every shell script.
+
+## [0.3.2] - 2026-11-16
+
 ### Fixed
-- **Search no longer returns deleted files**: `sync()` prunes index rows for
-  markdown that vanished or was renamed. Ghost results pointing at nonexistent
-  paths are worse than a cache miss.
-- **No more unclosed sqlite connections** on any CLI or MCP path; CI now runs the
-  suite and the example searches under `-W error::ResourceWarning` so leaks fail
-  the gate instead of printing a warning nobody reads.
-- **Concurrent first searches no longer die** with `database is locked`:
-  `open_db()` sets `busy_timeout=5000` and WAL. The index stays disposable.
 - **Summarizer process chatter**: transcript echoes (`assistant: …`,
   `[model changed: …]`), echoed shell commands and agent progress talk
   ("report delivered…") are now refused by one shared gate (`fact_ok`) that both
@@ -27,12 +25,24 @@ itself evolves only through explicit `PROTOCOL.md` revisions.
   line boundary (no split CJK glyphs); section budgets reserve the tail, so a fat
   `INDEX.md` can no longer consume the whole 9 KB and silently drop activity and
   snapshots.
+- READMEs: dropped the stale "~750 lines" claim; tool tables document the new
+  digest and summarizer gates.
 
 ### Added
 - `__version__` as the single source of truth; the MCP handshake reports it (was
   stuck at `0.1.0`).
-- CI: Python matrix 3.9 / 3.11 / 3.13 (matching the declared minimum),
-  `shellcheck -S warning` over every shell script.
+
+## [0.3.1] - 2026-11-16
+
+### Fixed
+- **Search no longer returns deleted files**: `sync()` prunes index rows for
+  markdown that vanished or was renamed. Ghost results pointing at nonexistent
+  paths are worse than a cache miss.
+- **No more unclosed sqlite connections** on any CLI or MCP path; CI now runs the
+  suite and the example searches under `-W error::ResourceWarning` so leaks fail
+  the gate instead of printing a warning nobody reads.
+- **Concurrent first searches no longer die** with `database is locked`:
+  `open_db()` sets `busy_timeout=5000` and WAL. The index stays disposable.
 
 ## [0.3.0] - 2026-11-13
 

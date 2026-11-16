@@ -2,7 +2,9 @@ name: ci
 on: [push, pull_request]
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04, not ubuntu-latest: the 26.04 image has no setup-python build
+    # for 3.9, and the README declares 3.9 as the floor — the floor must stay tested.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.9", "3.11", "3.13"]

@@ -8,6 +8,18 @@ itself evolves only through explicit `PROTOCOL.md` revisions.
 ### Added
 - CI: Python matrix 3.9 / 3.11 / 3.13 (matching the declared minimum),
   `shellcheck -S warning` over every shell script.
+- `--stats` reports inbox files older than three days as `stale_inbox` — an unread
+  message is a delivery failure, and until now nothing made a stalled queue visible.
+- `units/README.md`: user-scope vs system-scope vs launchd, how to prove it fired.
+
+### Changed (protocol)
+- **Inbox is a queue of files, not one file per recipient.** Each message is written as
+  its own file under `inbox/TO-<agent>/<YYYY-MM-DD>-<slug>.md`; nothing in an inbox is
+  ever edited or overwritten, and a correction is a new message. A single file per
+  recipient is last-writer-wins, and the message that disappears is precisely the unread
+  one — observed in production. Legacy `inbox/TO-<agent>.md` files are still read and
+  cleared the same way. Enforced by `inbox_write`, pinned by tests, specified in
+  `PROTOCOL.md` (channel 3) and both READMEs.
 
 ## [0.3.2] - 2026-11-16
 

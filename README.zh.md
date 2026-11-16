@@ -39,7 +39,8 @@ INDEX.md            入口页：结构、协议摘要、指针
 DIGEST.md           自动生成的 ≤9KB 自包含摘要（给读不到本地文件的 agent）
 facts/              当前事实，重写式，一个主题一个文件
 journal/            追加式事件流，按月轮转
-inbox/              按收件人的投递文件（TO-<对方>.md）
+inbox/              按收件人的投递队列，每条消息一个文件
+  TO-<对方>/<YYYY-MM-DD>-<slug>.md
 tools/              memory-search.py · summarize-sessions.py · make-digest.sh
 integrations/       按 agent 的胶水：dsh/（AGENTS.md 块）· hermes/（hook + 私有记忆快照）
 units/              每日 summarizer 的 systemd user timer
@@ -102,7 +103,9 @@ make install-units DIR=~/my-memory     # systemd user timer，本地 05:30 跑
   所列文件取值的行直接跳过。
 - **摘要端**：summarizer 输出先过行级闸门（必须是 bullet、日期不得越出会话年份、不得含
   凭据模式）才允许落 journal。
-- **边界**：所有写入都有上限（每次运行 ≤4KB、inbox ≤20 行、digest ≤9KB）；journal 追加
+- **边界**：所有写入都有上限（每次运行 ≤4KB、每条 inbox 消息 ≤20 行、digest ≤9KB）；
+- **投递可靠**：每条 inbox 消息是 `TO-<agent>/` 下独立的一个文件，永不覆盖——未读的消息
+  不会被下一条抹掉；`--stats` 会把超过三天的未读消息列为滞留投递；journal 追加
   用 `flock` 串行化。设计上单机——要跨机就把 git 当同步层（当初特意选 markdown 就是为此）。
 
 ## 设计取舍与诚实的局限

@@ -32,8 +32,8 @@ facts/              current truth, rewritten in place
   <topic>.md        one file per topic (fleet, a project, the agents themselves, ...)
 journal/            append-only event stream, rotated monthly
   <YYYY-MM>.md
-inbox/              per-recipient delivery files
-  TO-<other-agent>.md
+inbox/              per-recipient delivery queues, one file per message
+  TO-<other-agent>/<YYYY-MM-DD>-<slug>.md
 tools/              the shmem scripts (index/search, digest, summarizer)
 .index/             derived FTS5 index (git-ignored, disposable)
 ```
@@ -65,15 +65,21 @@ reads them whole (see read protocol).
 
 ### Channel 3 — inbox (delivery)
 
-Use to **notify the other agent(s)**. Write to `inbox/TO-<other>.md` — only the file *for*
-the other agent, never one for yourself. Content budget: **≤20 lines**, structured as
+Use to **notify the other agent(s)**. Each recipient has a **directory**, and each message is
+**its own file**: `inbox/TO-<other>/2026-11-16-<slug>.md`. Write only into directories *for*
+the other agent, never your own. Content budget: **≤20 lines per message**, structured as
 
 1. one-line conclusion,
 2. pointer (file + section, or commit),
 3. what you need from them.
 
-The recipient handles it, moves the content into `journal/`, and clears the file. An inbox
-file that stays unread is a failure of delivery — if it sits there for a while, re-send.
+Nothing in an inbox is ever edited or overwritten: the queue is append-only, so a second
+message lands beside the first instead of erasing an unread one, and a correction is a new
+message. The recipient handles each file, moves the content into `journal/`, and **deletes
+that file** (deletion is the ACK). A message that stays unread is a failure of delivery — if
+it sits there for a while, re-send it; `memory-search.py --stats` lists inbox files older than
+three days so a stalled queue is visible without anyone scrolling.
+(Legacy single files `inbox/TO-<other>.md` are still read and cleared the same way.)
 
 ## Read protocol
 
@@ -99,7 +105,7 @@ file that stays unread is a failure of delivery — if it sits there for a while
 4. **Ownership**: any agent may edit `facts/`, but only sections it verified itself. A large
    or cross-cutting change goes through `inbox/` first, so the other agent can object before
    it lands.
-5. **Budgets**: digest ≤9KB, inbox ≤20 lines, auto-summary ≤6 lines per session, ≤4KB per
+5. **Budgets**: digest ≤9KB, inbox ≤20 lines per message, auto-summary ≤6 lines per session, ≤4KB per
    summarizer run. Small numbers on purpose — if a delivery doesn't fit, it is not a
    delivery, it is a document, and documents belong in facts/.
 
@@ -116,7 +122,8 @@ shared automatically:
   injects it **once per session**. See `integrations/hermes/inject-shared-memory.sh`.
 - **Agent with MCP**: point its MCP client at `tools/memory-search.py --mcp`; read tools
   `memory_search` and `memory_stats`. Write tools `memory_write` (facts rewrite),
-  `memory_append` (journal append under `.lock`) and `inbox_write` (≤ 20 lines) are
+  `memory_append` (journal append under `.lock`) and `inbox_write` (one file per message,
+  ≤ 20 lines, never overwrites) are
   exposed only with `--allow-write`; they enforce the three channels, the secret guard
   (refuses, never writes), and slug rules, then re-index the changed file.
 - **Sandboxed agent**: paste/upload the digest. That's the whole integration.
@@ -151,4 +158,6 @@ Conversation history is the largest source of durable facts, so a scheduled job
   timeline that is cheap to grow and searchable, not readable, end to end.
 - The inbox exists because the naive "both agents read the same file" model breaks in
   practice: agents start, stop, and resume at random times. Explicit delivery with a
-  recipient-side ACK (move-to-journal) is the only mechanism that survives that.
+  recipient-side ACK (move-to-journal) is the only mechanism that survives that. One file
+  per message is the same argument one level down: a shared file per recipient is
+  last-writer-wins, and the message that gets lost is precisely the unread one.

@@ -44,7 +44,8 @@ INDEX.md            entry page: structure, protocol summary, pointers
 DIGEST.md           auto-generated ≤9KB self-contained digest (for agents without filesystem)
 facts/              current truth, rewritten in place, one file per topic
 journal/            append-only event stream, rotated monthly
-inbox/              per-recipient delivery files (TO-<other>.md)
+inbox/              per-recipient delivery queues, one file per message
+  TO-<other>/<YYYY-MM-DD>-<slug>.md
 tools/              memory-search.py · summarize-sessions.py · make-digest.sh
 integrations/       per-agent glue: dsh/ (AGENTS.md block) · hermes/ (hook + private-memory snapshot)
 units/              systemd user timer for the daily summarizer
@@ -109,7 +110,10 @@ nothing is hardcoded.
   and lines containing values from files listed in `SHMEM_SECRET_FILES` are skipped.
 - **Summarizer**: output passes a line-level gate (bullet form, no out-of-year dates,
   no credential patterns) before it touches the journal.
-- **Boundaries**: all writes are bounded (≤4KB per run, ≤20-line inboxes, ≤9KB digest);
+- **Boundaries**: all writes are bounded (≤4KB per run, ≤20 lines per inbox message, ≤9KB digest);
+- **Durable delivery**: each inbox message is its own file under `TO-<agent>/` and is never
+  overwritten, so an unread message cannot be erased by the next one; `--stats` lists inbox
+  files older than three days as stalled deliveries;
   journal appends are serialized with `flock`. Single-host by design — for multi-host,
   run git as the sync layer (markdown was chosen partly for this).
 

@@ -66,8 +66,11 @@ class ShmemTest(unittest.TestCase):
         self.assertTrue(journal.startswith("\n## ") and "- appended" in journal)
         ok, _ = shmem.channel_write(con, "inbox_write", {"agent": "agent-b", "content": "line1\nline2"})
         self.assertTrue(ok)
-        self.assertEqual((shmem.SM / "inbox" / "TO-agent-b.md").read_text(encoding="utf-8"),
-                         "line1\nline2")
+        box = shmem.SM / "inbox" / "TO-agent-b"
+        msgs = sorted(box.glob("*.md"))
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0].read_text(encoding="utf-8"), "line1\nline2")
+        self.assertIn(f"{shmem.now():%Y-%m-%d}-line1.md", msgs[0].name)
 
     def test_write_refusals(self):
         con = shmem.open_db()
@@ -81,6 +84,46 @@ class ShmemTest(unittest.TestCase):
         self.assertFalse(ok)
         ok, _ = shmem.channel_write(con, "memory_write", {"topic": "Bad/Topic", "content": "x"})
         self.assertFalse(ok)
+
+    def test_inbox_never_clobbers_unread(self):
+        # One file per recipient is last-writer-wins: a second delivery used to erase
+        # an unread message. The inbox is a queue of files, not a scratchpad.
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        for text in ("first conclusion", "second conclusion"):
+            ok, msg = shmem.channel_write(con, "inbox_write",
+                                          {"agent": "agent-b", "content": f"{text}\n- pointer"})
+            self.assertTrue(ok, msg)
+        box = shmem.SM / "inbox" / "TO-agent-b"
+        bodies = sorted(p.read_text(encoding="utf-8") for p in box.glob("*.md"))
+        self.assertEqual(bodies, ["first conclusion\n- pointer", "second conclusion\n- pointer"])
+        # an identical resend on the same day still gets its own file
+        ok, _ = shmem.channel_write(con, "inbox_write", {"agent": "agent-b", "content": "first conclusion\n- pointer"})
+        self.assertTrue(ok)
+        self.assertEqual(len(list(box.glob("*.md"))), 3)
+        # a corrected message is a new message: delivery is never rewritten in place
+        ok, msg = shmem.channel_write(con, "inbox_write",
+                                      {"agent": "agent-b", "content": "correction: edited draft"})
+        self.assertTrue(ok, msg)
+        base = box / f"{shmem.now():%Y-%m-%d}-first-conclusion.md"
+        self.assertEqual(base.read_text(encoding="utf-8"), "first conclusion\n- pointer")
+        self.assertEqual(len(list(box.glob("*.md"))), 4)
+
+    def test_stats_flags_stale_inbox(self):
+        # Protocol: an unread inbox file is a delivery failure. --stats makes it visible.
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        ok, _ = shmem.channel_write(con, "inbox_write", {"agent": "agent-b", "content": "old news\n- pointer"})
+        self.assertTrue(ok)
+        msg = next((shmem.SM / "inbox" / "TO-agent-b").glob("*.md"))
+        back = time.time() - 5 * 86400
+        os.utime(msg, (back, back))
+        st = shmem.stats(con)
+        self.assertEqual([e["path"] for e in st["stale_inbox"]], [str(msg.relative_to(shmem.SM))])
+        self.assertGreater(st["stale_inbox"][0]["age_days"], 3)
+        ok, _ = shmem.channel_write(con, "inbox_write", {"agent": "agent-b", "content": "fresh news\n- pointer"})
+        self.assertTrue(ok)
+        self.assertEqual(len(shmem.stats(con)["stale_inbox"]), 1)
 
     def test_no_flock_platform_refuses(self):
         con = shmem.open_db()

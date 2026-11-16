@@ -49,7 +49,7 @@ MAX_CHUNK_LINES = 30
 
 # Single source of truth for the version: the tag is cut at this value, the MCP
 # handshake reports it, and a test pins the handshake to it.
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 SECRET_RE = re.compile(r"(?:password|passwd|口令|密码|secret|api[ _-]?key|token)\s*[:=]\s*\S{6,}", re.I)
 
@@ -285,11 +285,26 @@ def stats(con):
     n = con.execute("SELECT count(*) FROM docs").fetchone()[0]
     files = con.execute("SELECT count(DISTINCT path) FROM docs").fetchone()[0]
     emb = con.execute("SELECT count(*) FROM embed").fetchone()[0]
-    return {"docs": n, "files": files, "embeddings": emb, "db": str(DB), "vector_enabled": bool(EMBED_BASE and EMBED_MODEL)}
+    stale = []
+    for p in sorted((SM / "inbox").rglob("*.md")):
+        age = (now().timestamp() - p.stat().st_mtime) / 86400
+        if age > 3:  # an unread inbox file is a delivery failure waiting to happen
+            stale.append({"path": str(p.relative_to(SM)), "age_days": round(age, 1)})
+    return {"docs": n, "files": files, "embeddings": emb, "db": str(DB),
+            "vector_enabled": bool(EMBED_BASE and EMBED_MODEL), "stale_inbox": stale}
 
 
 # ---------- Write face (three channels, protocol-enforced; MCP-only, opt-in) ----------
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+
+
+def msg_slug(content):
+    """Filename stem for one inbox message: ascii slug of its first line, or a hash
+    when the line has no ascii at all (CJK-only conclusions still need a name)."""
+    first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
+    words = re.findall(r"[a-z0-9]+", first.lower())
+    stem = "-".join(words)[:40].rstrip("-")
+    return stem or hashlib.sha256(content.encode("utf-8")).hexdigest()[:10]
 
 
 def now():
@@ -328,10 +343,19 @@ def channel_write(con, kind, args):
     elif kind == "inbox_write":
         agent, content = args.get("agent", ""), args.get("content", "")
         if not SLUG.match(agent):
-            return False, f"agent must be a kebab slug (inbox/TO-<agent>.md), got {agent!r}"
+            return False, f"agent must be a kebab slug (inbox/TO-<agent>/), got {agent!r}"
         if content.count("\n") + 1 > 20:
             return False, "inbox message must be <= 20 lines"
-        target = SM / "inbox" / f"TO-{agent}.md"
+        # One file per message: a single file per recipient is last-writer-wins, and an
+        # unread message silently disappears. The directory is the queue.
+        inbox = SM / "inbox" / f"TO-{agent}"
+        stem = f"{now():%Y-%m-%d}-{msg_slug(content)}"
+        target = inbox / f"{stem}.md"
+        if target.exists():
+            i = 2  # step to a free suffix: nothing here is ever overwritten
+            while (inbox / f"{stem}-{i}.md").exists():
+                i += 1
+            target = inbox / f"{stem}-{i}.md"
         mode, payload = "w", content
     else:
         return False, f"unknown write channel {kind!r}"
@@ -369,8 +393,10 @@ def mcp_tools(allow_write=False):
              "description": "Append a dated section to journal/<YYYY-MM>.md under the protocol lock.",
              "inputSchema": {"type": "object", "properties": {"entry": {"type": "string"}}, "required": ["entry"]}},
             {"name": "inbox_write",
-             "description": "Overwrite inbox/TO-<agent>.md (<= 20 lines: conclusion + pointers + ask).",
-             "inputSchema": {"type": "object", "properties": {"agent": {"type": "string"}, "content": {"type": "string"}},
+             "description": "Deliver one message as its own file under inbox/TO-<agent>/ "
+                            "(<= 20 lines: conclusion + pointers + ask). Never clobbers an unread message.",
+             "inputSchema": {"type": "object", "properties": {"agent": {"type": "string"},
+                             "content": {"type": "string"}},
                              "required": ["agent", "content"]}}]
     return tools
 

@@ -1,4 +1,4 @@
-## 2026-01-12 — for agent-b (handle, then move to journal/ and clear this file)
+## 2026-01-12 — for agent-b (handle, then move to journal/ and delete this file)
 
 **Conclusion:** dashboard moved to `tank:8090`; the old `build1:8090` alias is dead as of today.
 

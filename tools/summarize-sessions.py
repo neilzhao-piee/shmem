@@ -56,6 +56,30 @@ DECISION_RE = re.compile(
     r"|decided|changed|confirmed|deployed|fixed|root cause|version|commit|path|port|agreed|rule|must|limit|found)"
 )
 
+# Process chatter observed leaking into real journals: agent progress talk ("report
+# delivered"), transcript echoes ("assistant: ...", "[model changed: ...]") and echoed
+# shell commands. A durable fact never reads like any of these.
+BULLET_RE = re.compile(r"^[-*]\s*")
+ECHO_RE = re.compile(r"^(?:user|assistant)\s*:|\[(?:model changed|system-reminder|context reset)\]", re.I)
+SHELL_RE = re.compile(
+    r"^(?:\$ |> |echo\b|grep\b|sed\b|awk\b|curl\b|cat\b|ls\b|systemctl\b|journalctl\b|git\b|ssh\b|python3? -)")
+CHATTER_RE = re.compile(
+    r"\b(?:report|findings|summary)\b.{0,40}\b(?:delivered|follows|complete|attached|sent)\b"
+    r"|\b(?:delivered|sent|acknowledged|reported)\b.{0,40}\b(?:agent|parent|user|thread)\b"
+    r"|\bno further action\b|\bawaiting (?:your |the )?(?:reply|input|confirmation)\b",
+    re.I)
+
+
+def fact_ok(line):
+    """Line-level gate shared by the model path and the keyword fallback.
+
+    The fallback used to write raw DECISION_RE lines into the journal unfiltered —
+    that is how "assistant: ..." echoes got in. One gate, both paths."""
+    body = BULLET_RE.sub("", line).strip()
+    if len(body) < 12:
+        return False  # too short to carry a date/source, the hallmark of chatter
+    return not (is_noise(body) or ECHO_RE.search(body) or SHELL_RE.match(body) or CHATTER_RE.search(body))
+
 
 def log(msg):
     try:
@@ -260,7 +284,8 @@ SECRET_RE = re.compile(
 
 
 def clean_facts(text, date):
-    """Keep only bullet lines that do not invent a date outside the session year."""
+    """Keep only bullet lines that pass every gate: no secrets, no invented dates,
+    no process chatter, no transcript echoes, no echoed shell commands."""
     out, seen = [], set()
     for line in (text or "").splitlines():
         line = line.strip()
@@ -271,6 +296,8 @@ def clean_facts(text, date):
         m = YEAR_RE.search(line)
         if m and m.group(1) != date[:4]:
             continue
+        if not fact_ok(line):
+            continue
         if line in seen:
             continue
         seen.add(line)
@@ -279,7 +306,15 @@ def clean_facts(text, date):
 
 
 def heuristic(transcript):
-    return "\n".join([l for l in transcript.splitlines() if DECISION_RE.search(l)][:6])
+    """Keyword fallback. Output is normalized to bullets so clean_facts — and with it
+    the shared fact_ok gate — always applies; raw unfiltered lines must never reach
+    the journal through a fallback path."""
+    out = []
+    for line in transcript.splitlines():
+        line = line.strip()
+        if line and DECISION_RE.search(line) and fact_ok(line):
+            out.append("- " + BULLET_RE.sub("", line))
+    return "\n".join(out[:6])
 
 
 def main():

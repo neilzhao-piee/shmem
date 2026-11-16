@@ -8,6 +8,10 @@ itself evolves only through explicit `PROTOCOL.md` revisions.
 ### Added
 - CI: Python matrix 3.9 / 3.11 / 3.13 (matching the declared minimum),
   `shellcheck -S warning` over every shell script.
+- `make install-units` refuses to install a user-scope timer when the user manager is
+  unreachable or lingering is off, and says what to do instead. The old behaviour was a
+  silent success followed by a timer that never fired (the failure mode this repo's own
+  host hit).
 - `--stats` reports inbox files older than three days as `stale_inbox` — an unread
   message is a delivery failure, and until now nothing made a stalled queue visible.
 - `units/README.md`: user-scope vs system-scope vs launchd, how to prove it fired.

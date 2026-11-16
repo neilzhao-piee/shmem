@@ -48,6 +48,19 @@ test: ## run unit tests (stdlib unittest, CI gate)
 	$(PYTHON) $(ROOT)/tests/test_shmem.py
 
 install-units: ## install systemd user timer (DIR = memory root, defaults to ROOT)
+	@if ! systemctl --user show-environment >/dev/null 2>&1; then \
+	  echo "error: no user systemd instance is reachable (XDG_RUNTIME_DIR=/run/user/$$(id -u) missing?)."; \
+	  echo "  Typical cause: SSH session without a login session. Fix: loginctl enable-linger $$USER,"; \
+	  echo "  then reconnect. Alternative: system-scope units — see units/README.md"; \
+	  exit 1; \
+	fi
+	@if [ "$$(loginctl show-user "$${USER:-$$(id -un)}" -p Linger 2>/dev/null | sed 's/.*=//')" != "yes" ]; then \
+	  echo "error: lingering is off for $${USER:-$$(id -un)} — the timer would only fire while you are"; \
+	  echo "  logged in, i.e. it installs successfully and then silently stops. Fix:"; \
+	  echo "    loginctl enable-linger $${USER:-$$(id -un)}    # then run make install-units again"; \
+	  echo "  Alternative: system-scope units — see units/README.md"; \
+	  exit 1; \
+	fi
 	@dest="$$HOME/.config/systemd/user"; mkdir -p "$$dest"
 	@sed "s|@SHMEM_ROOT@|$(or $(DIR),$(ROOT))|g" units/shmem-summarize.service > "$$dest/shmem-summarize.service"
 	@sed "s|@SHMEM_ROOT@|$(or $(DIR),$(ROOT))|g" units/shmem-summarize.timer   > "$$dest/shmem-summarize.timer"

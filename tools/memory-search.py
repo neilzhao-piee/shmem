@@ -47,6 +47,10 @@ EMBED_BASE = os.environ.get("SHMEM_EMBED_BASE_URL", "")
 EMBED_MODEL = os.environ.get("SHMEM_EMBED_MODEL", "")
 MAX_CHUNK_LINES = 30
 
+# Single source of truth for the version: the tag is cut at this value, the MCP
+# handshake reports it, and a test pins the handshake to it.
+__version__ = "0.3.2"
+
 SECRET_RE = re.compile(r"(?:password|passwd|口令|密码|secret|api[ _-]?key|token)\s*[:=]\s*\S{6,}", re.I)
 
 LATIN = re.compile(r"[A-Za-z0-9_]{2,}")
@@ -398,7 +402,7 @@ def _mcp_loop(con, allow_write=False):
         rid = msg.get("id")
         if method == "initialize":
             reply({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}}, "serverInfo": {"name": "shmem", "version": "0.1.0"}}})
+                    "capabilities": {"tools": {}}, "serverInfo": {"name": "shmem", "version": __version__}}})
         elif method in ("notifications/initialized", "notifications/cancelled"):
             continue
         elif method == "tools/list":

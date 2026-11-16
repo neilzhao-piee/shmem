@@ -29,7 +29,7 @@ shmem 反过来：**记忆就是一堆 markdown 文件**，agent 本来就会读
    上下文会被自动共享**。
 3. **协议才是产品。** 真正的贡献是 [`PROTOCOL.md`](PROTOCOL.md)——三条写入通道
    （facts / journal / inbox）、一套读协议（先检索、别通读）、几条硬规则（绝不写密钥；
-   事实带日期和来源；修订不追加"更正"）。脚本只是这套协议约 750 行纯 Python 标准库 +
+   事实带日期和来源；修订不追加"更正"）。脚本只是这套协议的纯 Python 标准库 +
    几个 shell 的参考实现，**零第三方依赖**。喜欢协议、用自己的工具也行。
 
 ## 目录结构
@@ -84,8 +84,8 @@ make install-units DIR=~/my-memory     # systemd user timer，本地 05:30 跑
 | 工具 | 干什么 | 依赖 |
 |---|---|---|
 | `tools/memory-search.py` | 对 markdown 建 FTS5 索引；**中文按字符二元组切分**（不依赖 jieba）；按内容哈希增量重建索引；返回片段 + 文件 + 行号；CLI **和** MCP stdio 服务两种面；可选向量层（RRF 融合，默认关）；MCP 写工具（三通道 + flock + secret guard）仅在 `--allow-write` 时开放 | Python 3 标准库 |
-| `tools/summarize-sessions.py` | 每日收割：增量扫描 agent 会话历史 → 模型抽取持久事实 → 在 `flock` 下追加进 `journal/`；质量闸门（≤6 行、不编日期、不含凭据模式）；quiet guard + 去重（`SHMEM_QUIET_SECONDS`=600——仍在增长的会话结算后才摘要，逐字相同的块不再重复追加）；模型挂了退回关键词抽取；会话源可插拔（内置 DSH + hermes 两个 adapter） | Python 3 标准库 |
-| `tools/make-digest.sh` | 生成 `DIGEST.md`（≤9KB）：INDEX 头部 + facts 速览 + 最新自动摘要 + 最近私有记忆快照 | bash + awk（可移植反转，不依赖 `tac`） |
+| `tools/summarize-sessions.py` | 每日收割：增量扫描 agent 会话历史 → 模型抽取持久事实 → 在 `flock` 下追加进 `journal/`；质量闸门（≤6 行、不编日期、不含凭据模式、不含过程噪音——进度报告、对话回声、命令回显）；quiet guard + 去重（`SHMEM_QUIET_SECONDS`=600——仍在增长的会话结算后才摘要，逐字相同的块不再重复追加）；模型挂了退回关键词抽取；会话源可插拔（内置 DSH + hermes 两个 adapter） | Python 3 标准库 |
+| `tools/make-digest.sh` | 生成 `DIGEST.md`（≤9KB，按行截断）：INDEX 头部 + facts 速览 + 跨 journal 文件取最新 5 条自动摘要 + 最新私有记忆快照（旧文件回退） | bash + awk |
 | `integrations/dsh/update-agents-block.sh` | 在 DSH 的 `AGENTS.md` 标记区间里刷新自动注入块 | bash + awk |
 | `integrations/hermes/snapshot-memory.sh` | 对方 agent 的私有 `MEMORY.md`/`USER.md` 变化时追加进 journal | bash + sha256sum/shasum + flock（有 python3 回退） |
 | `eval/run.sh` | 对提交进仓库的合成样例跑 recall 测试（23 对，含中文和"查不到不许编"的诚实用例）；任何检索改动必须保持 100%——这就是 CI 门槛 | bash + python3 |

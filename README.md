@@ -33,8 +33,8 @@ durable facts from the agents' conversation history into the journal. That's it.
 3. **Protocol is the product.** The real contribution is [`PROTOCOL.md`](PROTOCOL.md) —
    three write channels (facts / journal / inbox), a read protocol (search, don't
    scroll), and hard rules (never write secrets; facts carry dates and sources; revise,
-   don't append corrections). The scripts are a reference implementation in ~750 lines
-   of pure Python standard library and a few shell scripts. **Zero third-party
+   don't append corrections). The scripts are a reference implementation in pure
+   Python standard library and a few shell scripts. **Zero third-party
    dependencies.** Adopt the protocol with your own tools if you like.
 
 ## Layout
@@ -90,8 +90,8 @@ wire its injection door:
 | tool | what it does | deps |
 |---|---|---|
 | `tools/memory-search.py` | FTS5 index over the markdown; **CJK character-bigram tokenizer** (no jieba); incremental re-index by content hash; returns snippets with file + line numbers; CLI **and** MCP stdio server; optional vector layer (RRF fusion, off by default); MCP write tools (three channels, flock, secret guard) only with `--allow-write` | Python 3 stdlib |
-| `tools/summarize-sessions.py` | daily harvest: incremental scan of agent session history → model extracts durable facts → appended to `journal/` under `flock`; quality gate (≤6 lines, no invented dates, no credential patterns); quiet guard + dedup (`SHMEM_QUIET_SECONDS`=600 — growing sessions are summarized only after they settle, identical blocks are never re-appended); keyword fallback when the model is down; pluggable session adapters (DSH + hermes included) | Python 3 stdlib |
-| `tools/make-digest.sh` | builds `DIGEST.md` (≤9KB): INDEX head + facts sketch + newest auto-summaries + latest private-memory snapshot | bash + awk (portable reversal, no `tac`) |
+| `tools/summarize-sessions.py` | daily harvest: incremental scan of agent session history → model extracts durable facts → appended to `journal/` under `flock`; quality gate (≤6 lines, no invented dates, no credential patterns, no process chatter — progress talk, transcript echoes, shell echoes); quiet guard + dedup (`SHMEM_QUIET_SECONDS`=600 — growing sessions are summarized only after they settle, identical blocks are never re-appended); keyword fallback when the model is down; pluggable session adapters (DSH + hermes included) | Python 3 stdlib |
+| `tools/make-digest.sh` | builds `DIGEST.md` (≤9KB, line-boundary budget): INDEX head + facts sketch + 5 newest auto-summaries across journal files + newest private-memory snapshot (older-file fallback) | bash + awk |
 | `integrations/dsh/update-agents-block.sh` | refreshes the auto-injected block in DSH's `AGENTS.md` between markers | bash + awk |
 | `integrations/hermes/snapshot-memory.sh` | appends the other agent's private `MEMORY.md`/`USER.md` to the journal when they change | bash + sha256sum/shasum + flock (python3 fallbacks) |
 | `eval/run.sh` | recall harness over committed synthetic fixtures (23 pairs incl. CJK + a no-match honesty case); every search change must keep it at 100% — this is the CI gate | bash + python3 |

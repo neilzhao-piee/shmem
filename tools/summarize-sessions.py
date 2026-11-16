@@ -60,7 +60,7 @@ DECISION_RE = re.compile(
 # delivered"), transcript echoes ("assistant: ...", "[model changed: ...]") and echoed
 # shell commands. A durable fact never reads like any of these.
 BULLET_RE = re.compile(r"^[-*]\s*")
-ECHO_RE = re.compile(r"^(?:user|assistant)\s*:|\[(?:model changed|system-reminder|context reset)\]", re.I)
+ECHO_RE = re.compile(r"^(?:user|assistant)\s*:|\[(?:model changed|system-reminder|context reset)[:\]]", re.I)
 SHELL_RE = re.compile(
     r"^(?:\$ |> |echo\b|grep\b|sed\b|awk\b|curl\b|cat\b|ls\b|systemctl\b|journalctl\b|git\b|ssh\b|python3? -)")
 CHATTER_RE = re.compile(
@@ -348,7 +348,7 @@ def main():
                 raw_facts, how = "", "no-model"
             facts = clean_facts(raw_facts, date)
             if not facts:
-                facts = clean_facts(heuristic(transcript), date) or (heuristic(transcript) if how != "model" else "")
+                facts = clean_facts(heuristic(transcript), date)
             state[sid] = marker
             processed += 1
             if not facts or facts.strip().upper() == "NONE":

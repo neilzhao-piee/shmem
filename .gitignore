@@ -13,6 +13,12 @@ DIGEST.md
 __pycache__/
 *.pyc
 
+# packaging artifacts (pip install -e . / pip wheel leave these behind)
+build/
+dist/
+*.egg-info/
+.venv-check/
+
 # OS junk
 .DS_Store
 

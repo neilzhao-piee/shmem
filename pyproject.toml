@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shmem"
+description = "Shared memory for agents: markdown on disk, search at query time, three write channels (zero runtime dependencies)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["agent", "memory", "markdown", "protocol", "retrieval", "sqlite"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Database :: Front-Ends",
+  "Topic :: Text Processing :: Indexing",
+]
+# No dependencies: the reference implementation is standard library only. That is
+# a protocol-level invariant, and tests/test_shmem.py fails if this ever gains one.
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/neilzhao-piee/shmem"
+Issues = "https://github.com/neilzhao-piee/shmem/issues"
+
+[project.scripts]
+shmem = "shmem.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "shmem.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["shmem"]

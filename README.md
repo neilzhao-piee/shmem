@@ -46,7 +46,8 @@ facts/              current truth, rewritten in place, one file per topic
 journal/            append-only event stream, rotated monthly
 inbox/              per-recipient delivery queues, one file per message
   TO-<other>/<YYYY-MM-DD>-<slug>.md
-tools/              memory-search.py · summarize-sessions.py · make-digest.sh
+shmem/              the reference implementation: search.py · summarize.py · cli.py
+tools/              stable entry points (compat shims into the package) + make-digest.sh
 integrations/       per-agent glue: dsh/ (AGENTS.md block) · hermes/ (hook + private-memory snapshot)
 units/              systemd user timer for the daily summarizer
 examples/           a synthetic memory tree you can `make new` from
@@ -61,7 +62,7 @@ Runs on Linux and macOS: Python 3.9+ (stdlib only) and sqlite3 with FTS5 (Apple'
 git clone <this repo> && cd shmem
 
 # 1. create a memory directory
-make new DIR=~/my-memory            # copies examples/ + tools/
+make new DIR=~/my-memory            # copies examples/ + tools/ + shmem/
 
 # 2. search it (works immediately; index builds on first query)
 SHMEM_ROOT=~/my-memory make search Q="where does the dashboard run"
@@ -85,6 +86,19 @@ wire its injection door:
 | a session hook (hermes `pre_llm_call`) | `integrations/hermes/inject-shared-memory.sh` — injects the digest once per session |
 | MCP | `tools/memory-search.py --mcp` (stdio; read tools `memory_search`, `memory_stats`; write tools `memory_write`, `memory_append`, `inbox_write` only with `--allow-write`) |
 | nothing (sandboxed) | paste/upload `DIGEST.md` — that's the whole integration |
+
+### Install it instead (extra door, not the front door)
+
+```sh
+pip install shmem
+SHMEM_ROOT=~/my-memory shmem search "where does the dashboard run"
+SHMEM_ROOT=~/my-memory shmem stats      # index size + stalled inbox deliveries
+SHMEM_ROOT=~/my-memory shmem serve      # MCP stdio server, read-only by default
+```
+
+`pip install` adds no runtime dependency and no daemon: it is the same package the
+clone uses, plus a console script. Cloning stays first-class — the memory tree
+keeps working through `tools/`, which are shims into the package.
 
 ## The tools
 

@@ -13,10 +13,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python3 -m py_compile tools/*.py
+      - run: python3 -m compileall -q shmem tools tests
       - run: find . -name '*.sh' -not -path './.git/*' -exec bash -n {} +
       - run: find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 shellcheck -S warning
       - run: python3 -W error::ResourceWarning tests/test_shmem.py
+      # pip install is an extra door, not the front door — but it has to actually work.
+      - name: install door
+        run: |
+          python3 -m venv .venv-check
+          .venv-check/bin/pip install --quiet -e .
+          test "$(.venv-check/bin/shmem version)" = "$(python3 -c 'import shmem; print(shmem.__version__)')"
+          SHMEM_ROOT=$PWD/examples .venv-check/bin/shmem search "dashboard" -n 2 | grep -q journal/
+          SHMEM_ROOT=$PWD/examples .venv-check/bin/shmem stats | grep -q stale_inbox
       - run: bash eval/run.sh
       - run: |
           SHMEM_ROOT=examples python3 -W error::ResourceWarning tools/memory-search.py --full "restic" | grep -q journal

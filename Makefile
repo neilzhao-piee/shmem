@@ -24,7 +24,8 @@ new: ## scaffold a new memory tree from examples/
 	mkdir -p "$(DIR)"
 	cp -r examples/* "$(DIR)/"
 	cp -r tools "$(DIR)/tools"
-	rm -rf "$(DIR)/tools/__pycache__"
+	cp -r shmem "$(DIR)/shmem"
+	rm -rf "$(DIR)/tools/__pycache__" "$(DIR)/shmem/__pycache__"
 	@echo "memory created at $(DIR)"
 	@echo "add SHMEM_ROOT=$(DIR) to your env (see config.example.env)"
 

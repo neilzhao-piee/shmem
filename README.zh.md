@@ -41,7 +41,8 @@ facts/              当前事实，重写式，一个主题一个文件
 journal/            追加式事件流，按月轮转
 inbox/              按收件人的投递队列，每条消息一个文件
   TO-<对方>/<YYYY-MM-DD>-<slug>.md
-tools/              memory-search.py · summarize-sessions.py · make-digest.sh
+shmem/              参考实现本体（包）：search.py · summarize.py · cli.py
+tools/              稳定入口（指向包的兼容垫片）+ make-digest.sh
 integrations/       按 agent 的胶水：dsh/（AGENTS.md 块）· hermes/（hook + 私有记忆快照）
 units/              每日 summarizer 的 systemd user timer
 examples/           一棵合成记忆树，可直接 `make new`
@@ -56,7 +57,7 @@ Linux 和 macOS 都能跑：只需 Python 3.9+（纯标准库）和带 FTS5 的 
 git clone <本仓库> && cd shmem
 
 # 1. 建一个记忆目录
-make new DIR=~/my-memory          # 拷贝 examples/ + tools/
+make new DIR=~/my-memory          # 拷贝 examples/ + tools/ + shmem/
 
 # 2. 检索（立即可用；首次查询时自动建索引）
 SHMEM_ROOT=~/my-memory make search Q="dashboard 跑在哪台机器"
@@ -79,6 +80,18 @@ make install-units DIR=~/my-memory     # systemd user timer，本地 05:30 跑
 | 会话 hook（hermes `pre_llm_call`） | `integrations/hermes/inject-shared-memory.sh`——每会话注入一次 digest |
 | MCP | `tools/memory-search.py --mcp`（stdio；读工具 `memory_search`、`memory_stats`；写工具 `memory_write`、`memory_append`、`inbox_write` 仅在 `--allow-write` 时开放） |
 | 啥都没有（沙箱） | 贴/上传 `DIGEST.md`——集成到此为止 |
+
+### 也可以直接安装（多一扇门，不是正门）
+
+```sh
+pip install shmem
+SHMEM_ROOT=~/my-memory shmem search "dashboard 跑在哪台机器"
+SHMEM_ROOT=~/my-memory shmem stats      # 索引规模 + 滞留的 inbox 投递
+SHMEM_ROOT=~/my-memory shmem serve      # MCP stdio 服务，默认只读
+```
+
+`pip install` 不引入任何运行依赖，也没有守护进程：装的是同一份代码，外加一个控制台命令。
+克隆仓库仍是正门——记忆树继续通过 `tools/` 工作，那些文件现在是指向包的垫片。
 
 ## 工具一览
 

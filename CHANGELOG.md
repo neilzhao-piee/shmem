@@ -6,6 +6,36 @@ itself evolves only through explicit `PROTOCOL.md` revisions.
 ## [Unreleased]
 
 ### Added
+- Packaging (ROADMAP P4): `pyproject.toml` with **zero runtime dependencies** and a
+  `shmem` console script (`shmem search|index|stats|serve|summarize|digest|version`).
+  The version is single-sourced: setuptools reads it dynamically from
+  `shmem.__version__`, and `shmem version` reports the installed distribution's
+  metadata through `importlib.metadata`, falling back to the source literal in a
+  git clone. CI now builds a venv, runs `pip install -e .` and exercises the
+  console script, so the install door is tested rather than assumed.
+- Tests now fail if `pyproject.toml` grows a runtime dependency or duplicates the
+  version — the zero-dependency invariant is protocol-level, not a preference.
+
+### Fixed
+- A misconfigured summarizer endpoint is no longer silent. `SUMMARIZE_MODEL_URL` pointing
+  at a base URL (`http://host:8080/v1` instead of `…/v1/chat/completions`) made every
+  nightly run fall back to keyword extraction while still reporting success — the log said
+  `fallback(HTTPError)`. The run now logs the HTTP status (`fallback(HTTPError 404)`) and,
+  once per run, states outright that the configured URL is not a completions endpoint.
+  `config.example.env` now says the URL must include the path, with an example.
+
+### Changed
+- The implementation moved from `tools/*.py` into a `shmem/` package
+  (`shmem/search.py`, `shmem/summarize.py`, `shmem/cli.py`). `tools/memory-search.py`
+  and `tools/summarize-sessions.py` are **compat shims**: every path PROTOCOL.md,
+  the Makefile, the units and the integrations name keeps working, including memory
+  trees that symlink those files. `make new` copies both directories now.
+- `shmem summarize` refuses unknown arguments instead of running. It is a write tool
+  configured entirely by environment; a stray `--help` used to launch a real
+  summarization pass against the live memory tree — which happened, and the
+  keyword-fallback output it wrote had to be rolled back.
+
+### Added
 - CI: Python matrix 3.9 / 3.11 / 3.13 (matching the declared minimum),
   `shellcheck -S warning` over every shell script.
 - `make install-units` refuses to install a user-scope timer when the user manager is

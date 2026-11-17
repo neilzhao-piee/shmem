@@ -6,19 +6,24 @@ Run: python3 tests/test_shmem.py   (or: make test)
 import importlib.util
 import json
 import os
+import re
 import subprocess
+import sys
 import tempfile
+import urllib.error
 import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location("shmem", ROOT / "tools" / "memory-search.py")
-shmem = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(shmem)
-sum_spec = importlib.util.spec_from_file_location("shmem_summarize", ROOT / "tools" / "summarize-sessions.py")
-summ = importlib.util.module_from_spec(sum_spec)
-sum_spec.loader.exec_module(summ)
+sys.path.insert(0, str(ROOT))  # test the source in this checkout, not an installed copy
+
+import shmem  # noqa: E402
+import shmem.search as shmem_mod  # noqa: E402
+import shmem.summarize as summ  # noqa: E402
+
+# The tests were written against the module the shim exposes; SM/DB are patched per test.
+shmem = shmem_mod
 
 
 class ShmemTest(unittest.TestCase):
@@ -247,6 +252,72 @@ class ShmemTest(unittest.TestCase):
         ])
         out = summ.heuristic(transcript)
         self.assertEqual(out, "- \u6539\u7528 pve01 VM101 \u627f\u8f7d CRM\uff0c2026-10-24 \u5df2\u90e8\u7f72\uff0c\u65e7 VM \u9000\u5f79\u3002")
+
+    def test_console_cli_entry_points(self):
+        # The installed door: `shmem <subcommand>` must reach the same code and the same SHMEM_ROOT.
+        env = dict(os.environ, SHMEM_ROOT=str(ROOT / "examples"))
+        r = subprocess.run([sys.executable, "-m", "shmem.cli", "search", "dashboard", "-n", "2"],
+                           cwd=str(ROOT), env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("dashboard", r.stdout.lower())
+        r = subprocess.run([sys.executable, "-m", "shmem.cli", "stats"],
+                           cwd=str(ROOT), env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("stale_inbox", json.dumps(json.loads(r.stdout)))
+        r = subprocess.run([sys.executable, "-m", "shmem.cli", "version"],
+                           cwd=str(ROOT), env=env, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), shmem.__version__)
+        r = subprocess.run([sys.executable, "-m", "shmem.cli", "nope"],
+                           cwd=str(ROOT), env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("unknown subcommand", r.stderr)
+
+    def test_model_failure_reason_is_actionable(self):
+        # Silent keyword fallback is how a misconfigured endpoint degraded memory
+        # for weeks. The log has to name the failure well enough to act on.
+        exc = urllib.error.HTTPError("http://x", 404, "Not Found", {}, None)
+        self.assertEqual(summ.fail_reason(exc), "HTTPError 404")
+        self.assertEqual(summ.fail_reason(urllib.error.URLError("nope")), "URLError nope")
+        self.assertEqual(summ.fail_reason(TimeoutError()), "TimeoutError")
+        # a base URL is the actual bug we hit; the tool must say so instead of guessing
+        self.assertIsNotNone(summ.endpoint_warning("http://h:8080/v1"))
+        self.assertIsNone(summ.endpoint_warning("http://h:8080/v1/chat/completions"))
+        self.assertIsNone(summ.endpoint_warning(""))
+
+    def test_summarizer_refuses_unknown_args(self):
+        # It is a write tool driven entirely by the environment. A stray flag must
+        # not run a summarization pass against a real memory tree.
+        with tempfile.TemporaryDirectory() as tree:
+            env = dict(os.environ, SHMEM_ROOT=tree)
+            for flag in ("--help", "--dry-run"):
+                r = subprocess.run([sys.executable, str(ROOT / "tools" / "summarize-sessions.py"), flag],
+                                   env=env, capture_output=True, text=True, timeout=60)
+                if flag == "--help":
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                else:
+                    self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertFalse((Path(tree) / "journal").exists())
+
+    def test_compat_shims_still_run_the_package(self):
+        # PROTOCOL.md, integrations and existing memory trees address tools/*.py.
+        # They are shims now, and the door must stay open.
+        env = dict(os.environ, SHMEM_ROOT=str(ROOT / "examples"))
+        r = subprocess.run([sys.executable, str(ROOT / "tools" / "memory-search.py"), "dashboard", "-n", "1"],
+                           cwd=str(ROOT), env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("journal/2026-01.md", r.stdout)
+
+    def test_packaging_keeps_zero_dependencies_and_one_version(self):
+        # The repo's invariant: standard library only. pyproject must not grow deps,
+        # and the version must stay single-sourced from shmem.__version__.
+        text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        project = text.split("[project]", 1)[1].split("[tool.", 1)[0]
+        # match keys, not prose: the description and comments talk about dependencies
+        self.assertIsNone(re.search(r"^\s*dependencies\s*=", project, re.M))   # zero runtime deps
+        self.assertIsNone(re.search(r"^\s*version\s*=", project, re.M))        # dynamic, not duplicated
+        self.assertIn('shmem = "shmem.cli:main"', text)
+        self.assertIn('version = { attr = "shmem.__version__" }', text)
+        self.assertEqual(shmem.__version__, shmem_mod.__version__)
 
     def test_mcp_server_version_tracks_module(self):
         msg = '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'

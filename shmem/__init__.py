@@ -7,7 +7,7 @@ implementation. Zero runtime dependencies, standard library only.
 # Single source of truth for the version. pyproject.toml reads this attribute
 # dynamically (it is not duplicated there), so an installed distribution's
 # metadata and the source in a git clone can never drift apart.
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 def get_version():

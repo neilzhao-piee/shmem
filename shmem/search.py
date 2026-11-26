@@ -172,7 +172,10 @@ def index_file(con, path, secrets, vector=False):
 
 
 def md_files():
-    return [p for p in SM.rglob("*.md") if ".index" not in p.parts]
+    # DIGEST.md stays OUT of the index: it is a derived injection artifact that reprints
+    # journal/facts chunks; indexing it only returns duplicate pointers to a non-authoritative copy.
+    return [p for p in SM.rglob("*.md")
+            if ".index" not in p.parts and p.name != "DIGEST.md"]
 
 
 def sync(con, vector=False):
@@ -227,8 +230,11 @@ def bm25(con, query, limit):
     if not toks:
         return []
     match = " OR ".join(f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in toks[:24])
+    # ORDER BY path,start_line breaks score ties: fts rowids shift whenever a file is
+    # re-indexed, so tie-breaking on rowid would make "is X in the top N" flip between runs.
     rows = con.execute(
-        "SELECT rowid, bm25(fts, 1.0, 3.0) AS score FROM fts WHERE fts MATCH ? ORDER BY score LIMIT ?",
+        "SELECT f.rowid, bm25(fts, 1.0, 3.0) AS score FROM fts f JOIN docs d ON d.id = f.rowid "
+        "WHERE fts MATCH ? ORDER BY score, d.path, d.start_line LIMIT ?",
         (match, limit * 3)).fetchall()
     return [(rid, -sc) for rid, sc in rows]
 
@@ -275,12 +281,22 @@ def search(query, limit=8, vector=False, con=None):
         sync(con, vector)
         bm = bm25(con, query, limit)
         vv = vector_recall(con, query, limit) if vector else []
-        ids = fuse(bm, vv, limit) if vv else [(rid, 1.0 / (i + 1)) for i, (rid, _s) in enumerate(bm)]
-        out = []
+        ids = fuse(bm, vv, limit * 2) if vv else [(rid, 1.0 / (i + 1)) for i, (rid, _s) in enumerate(bm)]
+        # Diversity: one chatty file (a journal mentioning the term fifty times) must
+        # not crowd facts/inbox out of the window — cap 2 chunks per file, fill the
+        # window from other files, then backfill the remainder with the overflow.
+        out, overflow, per_file = [], [], {}
         for rid, score in ids:
-            path, s, e, heading, text = doc_row(con, rid)
-            out.append({"path": path, "lines": [s, e], "heading": heading,
-                        "score": round(score, 4), "text": text})
+            row = doc_row(con, rid)
+            if not row:
+                continue
+            path, s, e, heading, text = row
+            rec = {"path": path, "lines": [s, e], "heading": heading,
+                   "score": round(score, 4), "text": text}
+            (out if per_file.get(path, 0) < 2 else overflow).append(rec)
+            per_file[path] = per_file.get(path, 0) + 1
+        out = out[:limit]
+        out.extend(overflow[:limit - len(out)])
         return out
     finally:
         if own:

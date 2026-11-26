@@ -3,7 +3,51 @@
 Notable changes per release. shmem adheres to semantic versioning; the protocol
 itself evolves only through explicit `PROTOCOL.md` revisions.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-26
+
+### Added
+- `shmem health` (`shmem/health.py`, `tools/health-check.py`): the daily pipeline
+  self-inspects — model endpoint configured *and* live, last summarizer run,
+  journal/digest freshness, inbox backlog — each an actionable line with a
+  non-zero exit code. A one-line verdict is embedded as **line 2 of DIGEST.md**
+  and mirrored into AGENTS.md, so agents reading "recent activity" can never
+  miss a broken pipeline (a silent model-config failure had been invisible for
+  weeks on this repo's own host).
+- `integrations/dsh/update-agents-block.sh`: regenerates a `SHMEM MIRROR` block
+  in a harness-visible AGENTS.md (protocol summary + three newest auto-summaries
+  + health line) after every summarizer run. Opt out with a `shmem-mirror:
+  disabled` line in that file.
+- Production eval corpus: `eval/queries.shmem.tsv` — 21 ground-truth queries
+  against the real fleet memory tree, run with
+  `QUERIES=eval/queries.shmem.tsv ROOT=/root/shared-memory bash eval/run.sh`.
+  The synthetic `examples/` suite stays the CI gate; this measures real recall.
+- **The summarizer titles its sessions.** The model must emit
+  `TOPIC: <≤10 words, the session's own language>` as line 1; `split_topic`
+  extracts it (fullwidth colon, stray-line tolerant), falling back to the old
+  session title but through `clean_title` — one line, capped at 100 chars.
+  Before this, sub-agent sessions echoed whole task prompts into headings, and
+  every digest and mirror inherited the noise.
+- Noise gates widened: `NOISE_PREFIX` gained the working-directory boilerplate
+  notice, and `clean_facts` now filters noise bullets even when the model
+  re-echoes them. One class of harness boilerplate had contributed five
+  identically-titled junk blocks to the production journal.
+- The production memory tree grew `facts/<area>/` subdirectories
+  (`facts/machines/`, one file per machine; fleet.md 100 KB → 17 KB index +
+  pointers). `md_files()`/`sync()` already covered subdirectories via rglob —
+  no index change was needed, which is the design working as intended.
+
+### Fixed
+- The digest facts map silently lost its tail: `head_budget` cut at a line
+  boundary in alphabetical file order, so everything after `infra.md` vanished
+  from DIGEST.md. The map now caps each file at 4 sections and prints a
+  collapsed `machines/` overview first, where the budget cap cannot reach it.
+- Eval negative probes could contaminate themselves: a maintenance-journal
+  entry that *named* the probe string got indexed, and "gibberish must return
+  nothing" then hit its own maintenance record. `eval/run.sh` now reports a
+  negative probe as a miss when any of its tokens exists in the corpus under
+  test — the lesson is pinned in code, not folklore.
+
+## [0.5.0] - 2026-11-17
 
 ### Added
 - Packaging (ROADMAP P4): `pyproject.toml` with **zero runtime dependencies** and a
@@ -34,6 +78,8 @@ itself evolves only through explicit `PROTOCOL.md` revisions.
   configured entirely by environment; a stray `--help` used to launch a real
   summarization pass against the live memory tree — which happened, and the
   keyword-fallback output it wrote had to be rolled back.
+
+## [0.4.0] - 2026-11-16
 
 ### Added
 - CI: Python matrix 3.9 / 3.11 / 3.13 (matching the declared minimum),

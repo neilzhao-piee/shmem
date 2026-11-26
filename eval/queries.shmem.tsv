@@ -1,0 +1,21 @@
+rx6900xt 生图 超时	imagegen.md
+PaddleOCR swap 页缓存	imagegen.md
+lvextend swap 32G	journal/2026-11.md
+crm_status 活状态	crm.md
+Spoke 录音转写	spoke.md
+Tailscale 组网	network.md
+群晖 DS923 接管	infra.md
+SearXNG 自建搜索	services.md
+llama.cpp 并发 端口	models.md
+UDR7 dsh-admin 管理员	network.md
+instabox 云沙箱	services.md
+AlphaESS 储能	alphaess.md
+听写小助手 word-dictation	services.md
+cloudflare scoped token	cloudflare.md
+Ignition Core API 探针	ignition.md
+pre_llm_call 注入 DIGEST	agents.md
+ulp-go 内部 API 无鉴权	journal/2026-11.md
+div7a 官网 下线	journal/2026-11.md
+memory.db 可重建	INDEX.md
+proxmox pve01 集群	infra.md
+zzqx qvuxpl	[]

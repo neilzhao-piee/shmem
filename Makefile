@@ -6,6 +6,7 @@
 #   make digest                     regenerate DIGEST.md
 #   make index                      (re)build the FTS5 index
 #   make summarize                  one manual summarizer run
+#   make health                     pipeline self-check (config/model/timer/files)
 #   make test                       run the unit tests
 #   make install-units DIR=~/my-memory   install the systemd user timer
 #
@@ -16,7 +17,7 @@ export SHMEM_ROOT := $(ROOT)
 export SHMEM_TZ ?= UTC
 PYTHON ?= python3
 
-.PHONY: new search index digest summarize stats test install-units clean
+.PHONY: new search index digest summarize health stats test install-units clean
 
 new: ## scaffold a new memory tree from examples/
 	@test -n "$(DIR)" || { echo "usage: make new DIR=/path/to/memory"; exit 1; }
@@ -41,6 +42,9 @@ digest: ## regenerate DIGEST.md (<=9KB self-contained snapshot)
 
 summarize: ## one manual summarizer run (incremental)
 	$(PYTHON) $(ROOT)/tools/summarize-sessions.py
+
+health: ## pipeline self-check (exit 1=WARN, 2=FAIL)
+	$(PYTHON) $(ROOT)/tools/health-check.py
 
 stats: ## index stats
 	$(PYTHON) $(ROOT)/tools/memory-search.py --stats

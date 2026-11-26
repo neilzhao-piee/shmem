@@ -20,6 +20,7 @@ Set SHMEM_ROOT to your memory tree, then:
   shmem stats                                       index size + stalled inbox deliveries
   shmem serve [--mcp] [--allow-write]               stdio MCP server (read-only by default)
   shmem summarize                                   LLM/keyword session summarizer
+  shmem health [--oneline]                          pipeline self-check (config/model/timer/files)
   shmem digest                                      regenerate DIGEST.md (shell tool)
   shmem version
 """
@@ -57,6 +58,9 @@ def main(argv=None):
     if cmd == "summarize":
         from . import summarize
         return summarize.main() or 0
+    if cmd == "health":
+        from . import health
+        return health.main(rest)
     if cmd == "digest":
         return _digest()
     sys.stderr.write(f"shmem: unknown subcommand {cmd!r}\n\n{HELP}")

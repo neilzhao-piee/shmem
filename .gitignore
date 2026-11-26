@@ -5,6 +5,7 @@
 .hook.log
 .agent-mem.sha
 .hermes-mem.sha
+.lock
 
 # generated output
 DIGEST.md

@@ -121,18 +121,26 @@ def quiet_skip(marker, now=None):
 
 
 def seen_blocks(journal_path):
-    """Existing auto-summary blocks in the journal, for dedup."""
-    try:
-        with open(journal_path, encoding="utf-8") as fh:
-            return set(re.findall(r"### auto-summary[^\n]*\n(?:- .*\n)*", fh.read()))
-    except OSError:
-        return set()
+    """Existing auto-summary blocks in the journal, for dedup.
+
+    Reads EVERY monthly journal file, not just the current one: session markers churn
+    (mtime changes even when content does not), so a session summarized in October gets
+    picked up again in November — with only the current month loaded for dedup, its
+    block was re-appended verbatim into the new month's file."""
+    blocks = set()
+    for path in glob.glob(os.path.join(os.path.dirname(journal_path), "*.md")):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                blocks.update(re.findall(r"### auto-summary[^\n]*\n(?:- .*\n)*", fh.read()))
+        except OSError:
+            continue
+    return blocks
 
 
 NOISE_PREFIX = (
     "<system-reminder>", "current runtime context", "time sampled", "instructions from:",
     "this is an automatically generated checkpoint", "you are an ai agent powered by",
-    "the following workspace instructions",
+    "the following workspace instructions", "the working directory changed",
 )
 
 
@@ -275,7 +283,9 @@ def ask_model(transcript, date):
     prompt = (
         "You are a memory archivist. Extract ONLY durable facts from the transcript below "
         "— things that remain true later: decisions, configuration, paths, ports, versions, "
-        "root causes, agreements. Hard requirements: each fact starts with '- ', one line per "
+        "root causes, agreements. Output format — line 1 must be exactly "
+        "'TOPIC: <short session topic, at most 10 words, in the session's own language>'; "
+        "Hard requirements: each fact starts with '- ', one line per "
         "fact, at most 6 facts; the only date you may use is the session date "
         + date + " (never invent other dates); write only what the transcript explicitly states, "
         "no speculation; if there is nothing durable output exactly NONE; "
@@ -304,6 +314,29 @@ SECRET_RE = re.compile(
 )
 
 
+TOPIC_RE = re.compile(r"^\s*TOPIC\s*[:：]\s*(.+)$", re.I)
+
+
+def split_topic(raw):
+    """The model output may lead with a 'TOPIC: …' line — a short human heading.
+    Returns (topic_or_None, rest_text). clean_facts would drop the line anyway;
+    splitting first gives the journal block a readable title instead of the raw
+    first prompt sentence, which made every subagent session look identical-noisy."""
+    lines = (raw or "").splitlines()
+    for i, line in enumerate(lines[:2]):  # tolerate one blank/stray line before it
+        m = TOPIC_RE.match(line)
+        if m and m.group(1).strip():
+            return m.group(1).strip(), "\n".join(lines[i + 1:])
+    return None, raw or ""
+
+
+def clean_title(text):
+    """One-line, whitespace-collapsed, capped title: a long task prompt must never
+    become the journal heading verbatim."""
+    t = re.sub(r"\s+", " ", (text or "")).strip()
+    return (t[:97] + "…") if len(t) > 100 else t
+
+
 def clean_facts(text, date):
     """Keep only bullet lines that pass every gate: no secrets, no invented dates,
     no process chatter, no transcript echoes, no echoed shell commands."""
@@ -312,6 +345,8 @@ def clean_facts(text, date):
         line = line.strip()
         if not line.startswith("-"):
             continue
+        if is_noise(line.lstrip("- ")) or is_noise(line.lstrip("- ").split(":", 1)[-1]):
+            continue  # process chatter can also arrive via the model/assistant path
         if SECRET_RE.search(line):
             continue
         m = YEAR_RE.search(line)
@@ -377,7 +412,8 @@ def main(argv=None):
                     raw_facts, how = heuristic(transcript), "fallback(%s)" % fail_reason(exc)
             else:
                 raw_facts, how = "", "no-model"
-            facts = clean_facts(raw_facts, date)
+            topic, facts_text = split_topic(raw_facts)
+            facts = clean_facts(facts_text, date)
             if not facts:
                 facts = clean_facts(heuristic(transcript), date)
             state[sid] = marker
@@ -386,8 +422,13 @@ def main(argv=None):
                 continue
             if written + len(facts) > MAX_OUTPUT_BYTES:
                 break
-            safe_title = SECRET_RE.sub("[redacted]", title or "")[:120]
-            block = "\n### auto-summary · %s · %s · %s\n%s\n" % (date, agent, safe_title, facts)
+            safe_title = clean_title(SECRET_RE.sub("[redacted]", topic or title or key))
+            # Keyword-fallback output must announce itself in the journal, not just in
+            # the log: a low-quality block that reads like a normal auto-summary
+            # pollutes retrieval and injected digests silently. The marker text stays
+            # constant (the reason goes to the log) so dedup remains stable across runs.
+            tag = " (LOW-QUALITY fallback)" if how.startswith("fallback") else ""
+            block = "\n### auto-summary%s · %s · %s · %s\n%s\n" % (tag, date, agent, safe_title, facts)
             key_block = block.lstrip("\n")
             if key_block in seen:
                 continue  # identical facts already delivered

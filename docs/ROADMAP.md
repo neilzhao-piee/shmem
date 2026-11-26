@@ -1,4 +1,4 @@
-# shmem improvement plan (draft, 2026-11-13)
+# shmem improvement plan (draft 2026-11-13, updated 2026-11-26)
 
 Research basis: full read of `PROTOCOL.md`, all tools (`memory-search.py`,
 `summarize-sessions.py`, `make-digest.sh`, integrations, units, Makefile, CI), the
@@ -98,8 +98,9 @@ small on purpose: each one is a single reviewable commit.
 
 ## Parking lot (with the trigger that promotes it)
 
-- **Topics layering** (`facts/<area>/<topic>.md`): promote when a real memory tree
-  exceeds ~30 facts files or INDEX.md routing becomes ambiguous.
+- ~~**Topics layering** (`facts/<area>/<topic>.md`): promote when a real memory tree
+  exceeds ~30 facts files or INDEX.md routing becomes ambiguous.~~ **Trigger fired
+  2026-11-26** (fleet.md 100 KB, routing ambiguous) → promoted to item 16.
 - **Vector layer scaling**: brute-force cosine in Python is fine to ~10k chunks;
   revisit (quantized blobs, two-pass filter) only when `embed` rows exceed that.
 - **Windows**: stays explicitly out of scope — protocol is platform-neutral, the
@@ -114,3 +115,73 @@ recall stays 23/23, new tests accompany every fix.
 **All four priority bands are closed.** What remains is a decision, not a roadmap:
 publish on PyPI or stay clone-only. The protocol is identical either way; publishing
 trades a versioned artifact for a name to defend.
+
+## v0.6.0 shipped (2026-11-26)
+
+`shmem health` + health line as DIGEST line 2 and in the AGENTS.md mirror;
+production eval corpus (`eval/queries.shmem.tsv`, 21 ground-truth queries);
+summarizer `TOPIC:` titling + widened noise gates; digest facts-map tail fix;
+eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
+`facts/machines/` — one file per machine — with zero-loss verification.
+
+## Next band — v0.7.x candidates (draft 2026-11-26; every item reproduced in production)
+
+15. **The summarizer burns model calls on *active* sessions.** Observed today:
+    every pass reprocessed 9–10 sessions because the state marker is
+    `mtime:size` — a session still running churns, so each pass re-summarizes
+    a half-finished transcript, and a "run until `processed=0`" backfill loop
+    can never converge (the operator is itself live workload).
+    *Fix:* `SUMMARIZE_MIN_IDLE` seconds (default 0 = today's behaviour) — skip
+    session files with fresh mtime; note the backfill interaction in
+    `units/README.md`. One commit + a test on the gate.
+16. **Formalize `facts/<area>/` in PROTOCOL.md.** The parking-lot trigger for
+    topics layering *fired*: fleet.md exceeded workable size and INDEX routing
+    was pointing agents at a 100 KB table. The implementation already supports
+    subdirectories (rglob covers index, digest, search — proved by the split
+    requiring zero index changes).
+    *Fix:* a PROTOCOL.md revision (area subdirs legal, INDEX must route to them)
+    + an `examples/` tree containing a subdirectory so CI tests the routing,
+    not just the flat case.
+17. **DIGEST budget cuts must be visible.** Today's map truncation was only
+    discoverable by grepping the generated file. *Fix:* when a section is cut,
+    emit a `[…truncated — see INDEX.md]` marker line; assert it in the
+    `test_make_digest_*` budget tests.
+18. **Measure the vector layer on the real tree.** RRF fusion exists but is
+    off by default, and the declared promotion trigger is *measured* recall
+    gain. The production corpus now has 21 ground-truth queries and an embedding
+    endpoint is live. *Fix:* run the prod eval with and without `SHMEM_EMBED_*`,
+    record the two numbers here; flip the default only on a measured gain with
+    CI still 23/23.
+19. **Git backstore for the memory tree (decision, not a feature).** The
+    authoritative markdown has no history — today's fleet split needed a
+    hand-written zero-loss verification script because there was no
+    `git diff` to answer "did we lose a line?". `git init` + auto-commit after
+    each timer run + the existing secret guard would give blame/rollback free.
+    Protocol must first rule: history is *derived* like the index (disposable,
+    never the entry point; secrets must never enter history — guard becomes a
+    pre-commit check). Parking-lot rule says promote at the first unrecoverable
+    manual edit; consider deciding early, the split was one edit away from
+    needing it.
+
+## External context (surveyed 2026-11-26)
+
+The 2026 agent-memory discourse backs the protocol bet: memory is an
+architecture *above* retrieval, and a vector database is one component, not
+the system ([atlan](https://atlan.com/know/agentic-ai-memory-vs-vector-database/)).
+Mem0's extract-and-consolidate layer is what the summarizer already is, Letta's
+self-editing memory blocks are what the facts/ channel already is, and Zep's
+temporal knowledge graph is the one shape with no flat-file equivalent —
+exactly the complexity this protocol refuses
+([agentscamp](https://agentscamp.com/guides/comparisons/mem0-vs-zep-vs-letta),
+[dataaspirant](https://dataaspirant.com/blog/mem0-vs-letta-vs-zep/)). shmem's
+differentiators in that market: zero runtime dependencies, human-auditable
+markdown as the authority, and protocol-level multi-agent sharing. The
+BM25+dense+RRF recipe already shipped matches current hybrid-search reference
+practice ([digitalapplied](https://www.digitalapplied.com/blog/hybrid-search-bm25-vector-reranking-reference-2026))
+— which argues for *measuring* item 18, not growing the vector layer.
+
+## Updated sequence
+
+v0.6.x hygiene only. v0.7.0 = items 15–17 (each one commit); item 18 is a
+measurement commit that gates the vector default; item 19 is a human decision
+with a protocol revision. The PyPI publish decision stays open either way.

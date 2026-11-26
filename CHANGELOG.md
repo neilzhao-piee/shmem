@@ -3,6 +3,46 @@
 Notable changes per release. shmem adheres to semantic versioning; the protocol
 itself evolves only through explicit `PROTOCOL.md` revisions.
 
+## [0.9.0] - 2026-11-26
+
+### Changed
+- **The vector layer is now on whenever an embedding endpoint is configured**
+  (it used to require `--vector` on every call). Endpoint discovery: env vars
+  or a tree-local `.embed.json` (`{"base_url", "model"}`, non-secret; env wins),
+  so the plain agent commands injected via AGENTS.md reach the fused path
+  without carrying env vars. Force off with `--no-vector` or `SHMEM_VECTOR=0`;
+  the eval harness now pins `--no-vector` so published recall stays reproducible.
+- **Embeddings are content-addressed** (schema v2: `emb_cache(hash)` keyed by
+  the sha256 of the embedded text + `docs.chash`): vectors belong to texts,
+  not to rowids. A journal append reuses every old chunk's vector and pays
+  only its new chunks; a full rebuild survives entirely on the cache. Old
+  (v1) index files are wiped, not migrated — derived state, protocol-sanctioned.
+- Query-time embedding is bounded: at most `SHMEM_EMBED_QUERY_MAX` (4) new
+  embeds per query (cache hits are free), embed calls fast-fail at
+  `SHMEM_EMBED_TIMEOUT` (10 s) into BM25 — a loaded or down embed host can no
+  longer block searches (the fleet's standing warning about the embed host).
+- The daily pipeline should end with a full re-index (`memory-search.py
+  --full`); the units template documents the step, and it is the vector
+  freshness owner — query-time embedding is only the budget-capped fallback.
+
+### Fixed
+- `open_db` pins `PRAGMA temp_store=MEMORY`. Root cause of the
+  "flaky fts5 corruption" that quarantined the production index on
+  2026-11-26: sqlite's fts5 bulk-delete spills a sorted rowid list to a temp
+  file past ~1000 rows, and on hosts with broken temp-directory resolution
+  (measured: python 3.12 / libsqlite3 3.46.1 here) every DELETE/DROP on a
+  large fts table dies with "unable to open database file" and can abort a
+  rebuild mid-transaction. Reproduced minimally at 1500 rows; the threshold
+  is why it looked flaky.
+
+### Measured
+- Production rollout (1032 chunks, Qwen3-Embedding-4B on 192.168.1.21:8085):
+  old vectors migrated in place (1034 rows -> 1010 unique hashes, zero
+  re-embeds); full rebuild 23 s with 5 new embeds (vs ~75 min cold); plain
+  agent query incl. its own query-embed 0.57 s; both eval arms 21/21 with the
+  negative probe correctly empty. Ranking (measured earlier same day, floor
+  + Qwen3 instruct prefix): top-1 13/21 -> 15/21, mean rank 1.75 -> 1.45.
+
 ## [0.8.0] - 2026-11-26
 
 ### Fixed

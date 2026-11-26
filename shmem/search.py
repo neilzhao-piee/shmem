@@ -151,10 +151,21 @@ def index_file(con, path, secrets, vector=False):
     raw = path.read_bytes()
     h = hashlib.sha256(raw).hexdigest()
     mtime = path.stat().st_mtime
+    # Embed BEFORE touching the db: the embed loop is network-bound (seconds per
+    # chunk), and doing it inside the write transaction holds the sqlite writer
+    # lock across every HTTP round-trip — concurrent searches then either fail
+    # with "database is locked" or, on a --full rebuild, see a half-empty index.
+    chunks = list(chunk_file(path, secrets))
+    vecs = {}
+    if vector and EMBED_BASE and EMBED_MODEL:
+        for i, (_p, _s, _e, _h, text) in enumerate(chunks):
+            v = embed(text)
+            if v:
+                vecs[i] = v
     con.execute("INSERT OR REPLACE INTO files(path,hash,mtime) VALUES(?,?,?)", (str(path), h, mtime))
     remove_indexed(con, str(path))
     n = 0
-    for p, s, e, heading, text in chunk_file(path, secrets):
+    for i, (p, s, e, heading, text) in enumerate(chunks):
         sha = f"{s}-{e}"
         toks = " ".join(tokenize(text))
         if not toks:
@@ -163,11 +174,9 @@ def index_file(con, path, secrets, vector=False):
                           (str(p), s, e, heading, text, mtime, sha))
         con.execute("INSERT INTO fts(rowid, tokens, heading) VALUES(?,?,?)", (cur.lastrowid, toks, heading))
         n += 1
-        if vector and EMBED_BASE and EMBED_MODEL:
-            v = embed(text)
-            if v:
-                con.execute("INSERT OR REPLACE INTO embed(doc_id, vec) VALUES(?,?)",
-                            (cur.lastrowid, struct.pack(f"{len(v)}f", *v)))
+        if i in vecs:
+            con.execute("INSERT OR REPLACE INTO embed(doc_id, vec) VALUES(?,?)",
+                        (cur.lastrowid, struct.pack(f"{len(vecs[i])}f", *vecs[i])))
     return n
 
 
@@ -197,17 +206,18 @@ def sync(con, vector=False):
         con.execute("DELETE FROM files WHERE path=?", (path,))
     for path in changed:
         indexed += index_file(con, path, secrets, vector)
-    con.commit()
+        con.commit()  # per-file: never hold the writer lock across the next file's embeds
     return indexed, len(gone)
 
 
 def rebuild(con, vector=False):
     secrets = cred_values()
     con.execute("DELETE FROM docs"); con.execute("DELETE FROM fts"); con.execute("DELETE FROM embed")
+    con.commit()  # publish the wipe before the slow part; readers never wait on it
     n = 0
     for path in sorted(md_files()):
         n += index_file(con, path, secrets, vector)
-    con.commit()
+        con.commit()
     return n
 
 

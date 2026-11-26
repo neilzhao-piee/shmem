@@ -10,6 +10,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 QUERIES="${QUERIES:-eval/queries.tsv}"
 MEMROOT="${ROOT:-examples}"
+# SHMEM_VECTOR=1 fuses the vector layer (needs SHMEM_EMBED_BASE_URL/SHMEM_EMBED_MODEL
+# AND an index already carrying embed rows: build it once with
+# tools/memory-search.py --full --vector first). Off by default, like the layer.
+VECTOR_ARGS=()
+[ "${SHMEM_VECTOR:-0}" = 1 ] && VECTOR_ARGS=(--vector)
 pass=0; fail=0
 while IFS=$'\t' read -r q expected; do
   [ -n "$q" ] || continue
@@ -29,7 +34,7 @@ while IFS=$'\t' read -r q expected; do
       continue
     fi
   fi
-  out=$(SHMEM_ROOT="$MEMROOT" python3 tools/memory-search.py "$q" --json -n 8)
+  out=$(SHMEM_ROOT="$MEMROOT" python3 tools/memory-search.py "$q" --json -n 8 ${VECTOR_ARGS[@]+"${VECTOR_ARGS[@]}"})
   if printf '%s' "$out" | grep -qF "$expected"; then
     pass=$((pass+1))
   else

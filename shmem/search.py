@@ -193,6 +193,17 @@ def open_db():
     # same file; without these pragmas the loser of the race gets "database is locked".
     con.execute("PRAGMA busy_timeout=5000")
     con.execute("PRAGMA journal_mode=WAL")
+    # temp_store=MEMORY is a workaround, not tuning: on hosts where sqlite's
+    # default temp-directory resolution is broken (measured 2026-11-26: python
+    # 3.12's libsqlite3 3.46.1 on this machine; /var/tmp exists but its temp
+    # files fail to open), the fts5 bulk-delete optimization spills a sorted
+    # rowid list to a temp file at >~1000 rows and fails with "unable to open
+    # database file" — aborting a rebuild mid-transaction. That is the root
+    # cause of the "flaky fts5 corruption" that quarantined the prod index on
+    # 2026-11-26 (the failing statement was a DELETE/DROP on a large fts table,
+    # size-dependent, not flaky). Memory temp space for these operations is a
+    # few MB worst case; the db file itself is untouched by this pragma.
+    con.execute("PRAGMA temp_store=MEMORY")
     # The index is derived and disposable (protocol): a db from an older schema
     # is wiped and rebuilt rather than migrated — the same escape hatch that made
     # the corrupt-fts5 incident of 2026-11-26 a shrug instead of an autopsy.

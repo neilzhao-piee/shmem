@@ -370,6 +370,22 @@ class ShmemTest(unittest.TestCase):
         self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertGreaterEqual(con.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
 
+    def test_fts_bulk_delete_survives_broken_tempdir_hosts(self):
+        # The 2026-11-26 prod-incident class: fts5's bulk delete spills a temp
+        # file above ~1000 rows and dies with "unable to open database file" on
+        # hosts with broken temp-dir resolution, aborting rebuild mid-txn.
+        # open_db's temp_store=MEMORY must be active, and the rebuild's own
+        # DELETE must run over a table past the spill threshold.
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        self.assertEqual(con.execute("PRAGMA temp_store").fetchone()[0], 2)  # MEMORY
+        for i in range(1, 1501):
+            con.execute("INSERT INTO fts(rowid, tokens, heading) VALUES(?,?,?)", (i, "tok%d word" % i, "h"))
+        con.commit()
+        con.execute("DELETE FROM docs"); con.execute("DELETE FROM fts"); con.execute("DELETE FROM files")
+        con.commit()
+        self.assertEqual(con.execute("SELECT count(*) FROM fts").fetchone()[0], 0)
+
     def test_vector_floor_drops_anisotropy_noise(self):
         # 2026-11-26 A/B: bare-query cosine has an anisotropy floor — gibberish
         # scored up to 0.52 against real chunks, so vector recall answered every

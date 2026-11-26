@@ -3,6 +3,37 @@
 Notable changes per release. shmem adheres to semantic versioning; the protocol
 itself evolves only through explicit `PROTOCOL.md` revisions.
 
+## [0.7.0] - 2026-11-26
+
+### Fixed
+- **Quiet guard now covers every adapter** (`shmem/summarize.py`). Production
+  evidence: each backfill pass re-summarized 8–11 sessions — the hermes
+  adapter's state marker was a bare message-id counter, so `SHMEM_QUIET_SECONDS`
+  silently never applied to it (only `mtime`-prefixed markers are guarded).
+  The adapter contract now requires each marker to lead with the last-activity
+  epoch, `marker_equivalent()` migrates the 75 existing bare-id production
+  states without spending a second model call, and `units/README.md` explains
+  why "run until processed=0" cannot converge on a live host.
+
+### Changed — protocol
+- **`facts/<area>/<entry>.md` splits are formal protocol** (`PROTOCOL.md`).
+  The pattern that fixed the 100 KB fleet.md incident is now written down: one
+  entry per file when a topic outgrows one file, the index file keeps routing,
+  and INDEX.md must name the area. The `examples/` tree mirrors the production
+  shape (fleet.md = index table, `machines/<host>.md` = fact files), so the CI
+  eval gates area routing itself: recall 25/25 (two new routing queries).
+- **Digest truncation is visible** (`tools/make-digest.sh`). Every byte-budget
+  cut now prints a marker line (`[…truncated — see INDEX.md]` for the head,
+  journal pointers for activity/snapshots) instead of silently producing a
+  digest that reads complete. `make-digest` also maps *any* facts/ subdirectory
+  generically — the old code hardcoded the one production area.
+
+### Measured
+- Vector layer (off by default, unchanged): production eval without embeddings
+  21/21; the with-vector arm is blocked on infrastructure — no embeddings
+  endpoint exists on this network (probed 2026-11-26). The exact A/B command
+  is recorded in docs/ROADMAP.md; the default flips only on a measured gain.
+
 ## [0.6.0] - 2026-11-26
 
 ### Added

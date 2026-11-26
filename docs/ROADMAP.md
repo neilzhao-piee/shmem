@@ -110,7 +110,7 @@ small on purpose: each one is a single reviewable commit.
 
 `v0.3.1` = P0(1–3) → `v0.3.2` = P1(4–7) → `v0.3.x` hygiene → `v0.4.0` = P2(8–10,
 PROTOCOL.md updates) → `v0.5.0` = P4 + P3 remainder. Each release: CI green, eval
-recall stays 23/23, new tests accompany every fix.
+recall stays green (25/25 on examples, 21/21 prod), new tests accompany every fix.
 
 **All four priority bands are closed.** What remains is a decision, not a roadmap:
 publish on PyPI or stay clone-only. The protocol is identical either way; publishing
@@ -126,32 +126,33 @@ eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
 
 ## Next band — v0.7.x candidates (draft 2026-11-26; every item reproduced in production)
 
-15. **The summarizer burns model calls on *active* sessions.** Observed today:
-    every pass reprocessed 9–10 sessions because the state marker is
-    `mtime:size` — a session still running churns, so each pass re-summarizes
-    a half-finished transcript, and a "run until `processed=0`" backfill loop
-    can never converge (the operator is itself live workload).
-    *Fix:* `SUMMARIZE_MIN_IDLE` seconds (default 0 = today's behaviour) — skip
-    session files with fresh mtime; note the backfill interaction in
-    `units/README.md`. One commit + a test on the gate.
-16. **Formalize `facts/<area>/` in PROTOCOL.md.** The parking-lot trigger for
-    topics layering *fired*: fleet.md exceeded workable size and INDEX routing
-    was pointing agents at a 100 KB table. The implementation already supports
-    subdirectories (rglob covers index, digest, search — proved by the split
-    requiring zero index changes).
-    *Fix:* a PROTOCOL.md revision (area subdirs legal, INDEX must route to them)
-    + an `examples/` tree containing a subdirectory so CI tests the routing,
-    not just the flat case.
-17. **DIGEST budget cuts must be visible.** Today's map truncation was only
-    discoverable by grepping the generated file. *Fix:* when a section is cut,
-    emit a `[…truncated — see INDEX.md]` marker line; assert it in the
-    `test_make_digest_*` budget tests.
-18. **Measure the vector layer on the real tree.** RRF fusion exists but is
-    off by default, and the declared promotion trigger is *measured* recall
-    gain. The production corpus now has 21 ground-truth queries and an embedding
-    endpoint is live. *Fix:* run the prod eval with and without `SHMEM_EMBED_*`,
-    record the two numbers here; flip the default only on a measured gain with
-    CI still 23/23.
+15. **DONE v0.7.0 — diagnosis corrected.** The summarizer burned model calls on
+    *active* sessions: every backfill pass reprocessed 9–10 (processed=8..11),
+    because the hermes adapter's marker was a bare message-id counter, so the
+    quiet guard (`SHMEM_QUIET_SECONDS`, already present) never applied to it —
+    not a missing knob. *Fix shipped:* every adapter marker must lead with the
+    last-activity epoch; `marker_equivalent` migrates the 75 legacy bare-id
+    states without re-spending a call; `units/README.md` documents why
+    "run until processed=0" cannot converge on a live host.
+16. **DONE v0.7.0 — `facts/<area>/<entry>.md` is protocol.** PROTOCOL.md states
+    the split rule (index file keeps routing, INDEX.md must name the area);
+    `examples/` now mirrors the production shape (fleet.md=index, machines/=
+    per-host files) so the CI eval itself tests area routing — recall measured
+    on it, 25/25; make-digest maps any facts/ subdir generically (the old code
+    hardcoded the one production area and its Chinese note).
+17. **DONE v0.7.0 — cuts are visible.** Every byte-budget cut in make-digest
+    prints a marker (`[…truncated — see INDEX.md]`, journal pointers for the
+    tail sections); three tests pin marker-on-cut, marker-on-snapshot-cut, and
+    no false marker when nothing was cut.
+18. **Measured 2026-11-26: no-vector baseline 21/21 on the real tree; the
+    with-vector number is BLOCKED on infrastructure.** The claim above that an
+    "embedding endpoint is live" was wrong — probed: `192.168.1.45:8080` serves
+    chat only (`/v1/embeddings` → not found), no ollama anywhere on the LAN.
+    The A/B is one command when an endpoint exists:
+    `SHMEM_EMBED_BASE_URL=… SHMEM_EMBED_MODEL=… QUERIES=eval/queries.shmem.tsv
+    ROOT=/root/shared-memory bash eval/run.sh`. **Vector default stays OFF** —
+    no measured gain exists yet, and the external survey argues for measuring,
+    not growing, the vector layer.
 19. **Git backstore for the memory tree (decision, not a feature).** The
     authoritative markdown has no history — today's fleet split needed a
     hand-written zero-loss verification script because there was no
@@ -182,6 +183,7 @@ practice ([digitalapplied](https://www.digitalapplied.com/blog/hybrid-search-bm2
 
 ## Updated sequence
 
-v0.6.x hygiene only. v0.7.0 = items 15–17 (each one commit); item 18 is a
-measurement commit that gates the vector default; item 19 is a human decision
-with a protocol revision. The PyPI publish decision stays open either way.
+v0.7.0 shipped = items 15–17 (one commit each) + the item-18 measurement
+(baseline 21/21 recorded; the vector arm awaits an embeddings endpoint —
+default stays OFF). Item 19 remains a human decision with a protocol revision.
+The PyPI publish decision stays open either way.

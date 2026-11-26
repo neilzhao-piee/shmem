@@ -20,7 +20,7 @@ Every PR must pass, locally and in CI:
 
 ```sh
 make test          # stdlib unittest, currently the CI gate
-bash eval/run.sh   # recall harness over examples/, 23/23 expected
+bash eval/run.sh   # recall harness over examples/, 25/25 expected
 ```
 
 plus the CI extras: `py_compile`, `bash -n`, `shellcheck -S warning`, and

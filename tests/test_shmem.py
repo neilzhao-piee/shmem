@@ -479,6 +479,8 @@ class ShmemTest(unittest.TestCase):
         self.assertEqual(digest.count("private memory snapshot"), 1)
         self.assertIn("NEW-SNAP-MARKER", digest)
         self.assertNotIn("OLD-SNAP-MARKER", digest)
+        # no false alarm: nothing was cut in this small fixture
+        self.assertNotIn("truncated", digest)
 
     def test_make_digest_maps_facts_area_entries(self):
         # facts/<area>/ is protocol since v0.7 (PROTOCOL.md): the digest map must
@@ -504,8 +506,8 @@ class ShmemTest(unittest.TestCase):
         # them silently).
         jr = shmem.SM / "journal"
         jr.mkdir(parents=True)
-        filler = "\n".join("filler line %03d \u8fd9\u662f\u4e00\u6bb5\u8f83\u957f\u7684\u4e2d\u6587\u8bf4\u660e\u7528\u6765\u5403\u6389\u9884\u7b97 abcdefghijklmnop" % i
-                           for i in range(200))
+        filler = "\n".join(("filler line %03d \u8fd9\u662f\u4e00\u6bb5\u8f83\u957f\u7684\u4e2d\u6587\u8bf4\u660e\u7528\u6765\u5403\u6389\u9884\u7b97 " + "abcdefghijklmnop" * 8) % i
+                           for i in range(400))  # ~25 KB: guarantees the head section itself is over budget
         (shmem.SM / "INDEX.md").write_text("# Index\n\n" + filler + "\n", encoding="utf-8")
         (jr / "2026-11.md").write_text(
             "# Journal\n### auto-summary \u00b7 2026-11-02 \u00b7 dsh \u00b7 n1\n- fact N1\n"
@@ -518,7 +520,29 @@ class ShmemTest(unittest.TestCase):
         self.assertLessEqual(len(digest.encode("utf-8")), 9000)
         self.assertIn("fact N1", digest)
         self.assertIn("NEW-SNAP-MARKER", digest)
+        # v0.7: the cut must be VISIBLE — a truncated digest must not read like
+        # a complete one.
+        self.assertIn("[…truncated — see INDEX.md]", digest)
         self.assertTrue(digest.endswith("\n"))
+
+    def test_make_digest_marks_truncated_snapshot(self):
+        jr = shmem.SM / "journal"
+        jr.mkdir(parents=True)
+        (shmem.SM / "INDEX.md").write_text("# Index\n\nentry page\n", encoding="utf-8")
+        pad = "\n".join("snapshot line %03d 中文填充内容用来超过该节的字节预算 xyzabcdefghijklmnop" % i
+                        for i in range(120))  # ~7 KB, over the 2200-byte snapshot budget
+        (jr / "2026-11.md").write_text(
+            "# Journal\n### auto-summary \u00b7 2026-11-02 \u00b7 dsh \u00b7 n1\n- fact N1\n"
+            "\n## 2026-11-08 09:58 private memory snapshot (auto)\n" + pad + "\n", encoding="utf-8")
+        env = dict(os.environ, SHMEM_ROOT=str(shmem.SM), SHMEM_TZ="UTC")
+        r = subprocess.run(["bash", str(ROOT / "tools" / "make-digest.sh")],
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        digest = (shmem.SM / "DIGEST.md").read_text(encoding="utf-8")
+        self.assertLessEqual(len(digest.encode("utf-8")), 9000)
+        self.assertIn("snapshot line 000", digest)
+        self.assertNotIn("snapshot line 119", digest)
+        self.assertIn("[…snapshot truncated — read journal/*.md]", digest)
 
     def test_search_caps_chunks_per_file(self):
         # A long journal that mentions the term forty times must not crowd the authoritative

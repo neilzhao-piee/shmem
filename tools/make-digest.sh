@@ -82,14 +82,22 @@ sec_hdr=$(mktemp); sec_head=$(mktemp); sec_act=$(mktemp); sec_snap=$(mktemp)
 # Section budgets: the index+facts head used to consume the whole 9KB, silently
 # cutting activity and snapshots (a real memory tree's INDEX alone can be 6KB+).
 # Reserve the tail sections first, then give the head whatever budget remains.
-# All cuts are at line boundaries (LC_ALL=C => length() counts bytes).
-cap_lines() { LC_ALL=C awk -v max="$1" 'BEGIN{n=0} {b=length($0)+1; if(n+b>max) exit; n+=b; print}' "$2"; }
-cap_lines 1800 "$sec_act" > "${sec_act}.c" && mv "${sec_act}.c" "$sec_act"
-cap_lines 2200 "$sec_snap" > "${sec_snap}.c" && mv "${sec_snap}.c" "$sec_snap"
-head_budget=$(( 9000 - $(wc -c < "$sec_hdr") - $(wc -c < "$sec_act") - $(wc -c < "$sec_snap") ))
+# All cuts are at line boundaries (LC_ALL=C => length() counts bytes), and every
+# cut leaves a visible marker: a DIGEST that silently dropped half the facts map
+# reads exactly like a complete one (v0.7: the reader must be able to tell).
+cap_lines() { LC_ALL=C awk -v max="$1" -v note="$3" '
+  BEGIN{n=0; cut=""}
+  {b=length($0)+1; if(n+b>max){cut=note; exit} n+=b; print}
+  END{if(cut!="") print cut}
+' "$2"; }
+cap_lines 1800 "$sec_act" '> […older activity truncated — read journal/*.md]' > "${sec_act}.c" && mv "${sec_act}.c" "$sec_act"
+cap_lines 2200 "$sec_snap" '> […snapshot truncated — read journal/*.md]' > "${sec_snap}.c" && mv "${sec_snap}.c" "$sec_snap"
+# 100 bytes reserved for the head's own truncation marker + section separators,
+# so the 9000 cap still holds once the marker is printed.
+head_budget=$(( 9000 - $(wc -c < "$sec_hdr") - $(wc -c < "$sec_act") - $(wc -c < "$sec_snap") - 100 ))
 {
   cat "$sec_hdr"
-  cap_lines "$head_budget" "$sec_head"
+  cap_lines "$head_budget" "$sec_head" '> […truncated — see INDEX.md]'
   echo
   cat "$sec_act"
   echo

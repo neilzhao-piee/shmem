@@ -1,10 +1,12 @@
-restic	facts/fleet.md
-ZFS pool snapshot	facts/fleet.md
-NTP drift build1	facts/fleet.md
+restic	facts/machines/tank.md
+ZFS pool snapshot	facts/machines/tank.md
+NTP drift build1	facts/machines/build1.md
 VLAN iot	facts/fleet.md
-dashboard port 8090	facts/fleet.md
-iot-relay allowlist	facts/fleet.md
-credentials location only	facts/fleet.md
+dashboard port 8090	facts/machines/tank.md
+iot-relay allowlist	facts/machines/tank.md
+credentials location only	facts/machines/tank.md
+gw do not reboot	facts/machines/gw.md
+coding VM agent-a	facts/machines/build1.md
 sandboxed agent digest	facts/agents.md
 MCP search tool	facts/agents.md
 summarizer keyword fallback	facts/agents.md

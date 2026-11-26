@@ -30,6 +30,8 @@ INDEX.md            entry page: structure, protocol summary, pointers (read this
 DIGEST.md           auto-generated self-contained digest, ≤9KB, for agents that cannot read files
 facts/              current truth, rewritten in place
   <topic>.md        one file per topic (fleet, a project, the agents themselves, ...)
+  <area>/<entry>.md  a topic that grew out of one file splits one entry per file
+                     (facts/machines/<host>.md is the canonical example)
 journal/            append-only event stream, rotated monthly
   <YYYY-MM>.md
 inbox/              per-recipient delivery queues, one file per message
@@ -46,6 +48,13 @@ Use when **a fact changed**. Edit the matching section of `facts/<topic>.md` in 
 the `Updated: YYYY-MM-DD` line at the top of the file. Facts contain only what is true
 *right now*. If a fact is stale, delete or revise it — never append a "correction" below
 the old value. Appended corrections are exactly how these files bloat until nobody reads them.
+
+When one topic file outgrows working size (the production trigger: a 100 KB fleet table that
+agents kept reading whole), split it into `facts/<area>/<entry>.md` — one file per entry
+(one machine, one service). Two rules come with the split: the index/pointer file keeps
+routing (the topic file becomes the area's table of contents), and **INDEX.md must name the
+area**, otherwise agents route to the old fat file. Search and digest treat areas as ordinary
+files; no tool change is needed.
 
 ### Channel 2 — journal (append only)
 

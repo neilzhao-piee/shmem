@@ -43,6 +43,8 @@ durable facts from the agents' conversation history into the journal. That's it.
 INDEX.md            entry page: structure, protocol summary, pointers
 DIGEST.md           auto-generated ≤9KB self-contained digest (for agents without filesystem)
 facts/              current truth, rewritten in place, one file per topic
+  <area>/<entry>.md   a topic that outgrew one file splits one entry per file
+                      (the production example: facts/machines/<host>.md)
 journal/            append-only event stream, rotated monthly
 inbox/              per-recipient delivery queues, one file per message
   TO-<other>/<YYYY-MM-DD>-<slug>.md

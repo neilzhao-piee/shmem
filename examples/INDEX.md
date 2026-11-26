@@ -8,7 +8,8 @@
 INDEX.md              this page: structure, read/write protocol, pointers
 DIGEST.md             self-contained digest (auto-generated, ≤9KB): for agents that cannot read local files
 facts/                current truth, **rewrite-in-place**: only "true right now", edit in place when it changes
-  fleet.md            machines / network / services
+  fleet.md            machines INDEX table + shared network notes (pointers only, no detail)
+  machines/<host>.md  one file per machine — machine facts live HERE, not in fleet.md
   agents.md           the two agents' runtimes and service chain
 journal/2026-01.md    event stream, **append-only**, rotated monthly
 inbox/                drop zone: TO-agent-b.md (for agent-b), TO-agent-a.md (for agent-a)

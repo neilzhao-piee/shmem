@@ -480,6 +480,24 @@ class ShmemTest(unittest.TestCase):
         self.assertIn("NEW-SNAP-MARKER", digest)
         self.assertNotIn("OLD-SNAP-MARKER", digest)
 
+    def test_make_digest_maps_facts_area_entries(self):
+        # facts/<area>/ is protocol since v0.7 (PROTOCOL.md): the digest map must
+        # list the entry names generically — the old code hardcoded the one
+        # production area (machines) and its note.
+        (shmem.SM / "facts" / "machines").mkdir(parents=True)
+        (shmem.SM / "INDEX.md").write_text("# Index\n\nentry page\n", encoding="utf-8")
+        (shmem.SM / "facts" / "machines" / "build1.md").write_text("# build1\n- ip 10.9.0.21\n", encoding="utf-8")
+        (shmem.SM / "facts" / "machines" / "tank.md").write_text("# tank\n- pool tank\n", encoding="utf-8")
+        (shmem.SM / "facts" / "fleet.md").write_text("# Fleet\n\n## Machines\ntable\n", encoding="utf-8")
+        env = dict(os.environ, SHMEM_ROOT=str(shmem.SM), SHMEM_TZ="UTC")
+        r = subprocess.run(["bash", str(ROOT / "tools" / "make-digest.sh")],
+                           env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        digest = (shmem.SM / "DIGEST.md").read_text(encoding="utf-8")
+        self.assertIn("machines/ — one file per entry:", digest)
+        self.assertIn("build1 tank", digest)
+        self.assertIn("### fleet.md", digest)
+
     def test_make_digest_budget_survives_giant_index(self):
         # A real INDEX.md can alone exceed the 9KB budget; activity and the latest
         # snapshot must still survive the cap (reserved tail budgets, old code cut

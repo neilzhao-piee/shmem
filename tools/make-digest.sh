@@ -27,14 +27,16 @@ sec_hdr=$(mktemp); sec_head=$(mktemp); sec_act=$(mktemp); sec_snap=$(mktemp)
   sed -n '1,/^## 检索层/p' INDEX.md | sed '$d' | head -n 60
   echo
   echo "## Facts section map (which ## is where)"
-  # machines/ is one-file-per-machine: the names ARE the section info (fleet.md
-  # holds the index table). Printed FIRST: per-file "###" entries were
-  # alphabetically cut by head_budget, and a collapsed line must survive the cap.
-  if [ -d facts/machines ]; then
+  # facts/<area>/ subdirs are one-file-per-entry: the entry names ARE the section
+  # info. Area lines print BEFORE per-file sections: head_budget cuts from the end,
+  # and a collapsed names line must survive the cap.
+  for d in $(find facts -mindepth 1 -maxdepth 1 -type d | sort); do
+    names=$( (cd "$d" && ls *.md 2>/dev/null | sed 's/\.md$//' | paste -sd ' ' -) )
+    [ -n "$names" ] || continue
     echo
-    echo "### machines/ — 一机一文件（索引表在 fleet.md「机器」节）："
-    (cd facts/machines && ls *.md 2>/dev/null | sed 's/\.md$//' | paste -sd ' ' - | sed 's/^/  /')
-  fi
+    echo "### ${d#facts/}/ — one file per entry:"
+    echo "  $names"
+  done
   for f in $(find facts -maxdepth 1 -name '*.md' | sort); do
     [ -r "$f" ] || continue
     echo

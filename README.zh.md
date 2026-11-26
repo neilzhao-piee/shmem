@@ -38,6 +38,7 @@ shmem 反过来：**记忆就是一堆 markdown 文件**，agent 本来就会读
 INDEX.md            入口页：结构、协议摘要、指针
 DIGEST.md           自动生成的 ≤9KB 自包含摘要（给读不到本地文件的 agent）
 facts/              当前事实，重写式，一个主题一个文件
+  <area>/<entry>.md   主题膨胀后拆成一条目一文件（生产示例：facts/machines/<主机>.md）
 journal/            追加式事件流，按月轮转
 inbox/              按收件人的投递队列，每条消息一个文件
   TO-<对方>/<YYYY-MM-DD>-<slug>.md

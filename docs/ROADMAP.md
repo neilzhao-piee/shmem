@@ -163,6 +163,14 @@ eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
     pre-commit check). Parking-lot rule says promote at the first unrecoverable
     manual edit; consider deciding early, the split was one edit away from
     needing it.
+20. **Summarizer state is saved only at run end.** Hit live on 2026-11-26: a
+    run killed by its own timeout after 12 sessions had written journal blocks
+    but persisted no marker, so the next pass re-summarized the same sessions —
+    and since the model is not deterministic, the near-duplicates missed the
+    exact-text dedup. Eight duplicate auto-summary blocks had to be removed
+    from `journal/2026-11.md` by hand.
+    *Fix:* save the state file after each session (cheap, stdlib json), not
+    once per run; assert it in a test that aborts mid-run.
 
 ## External context (surveyed 2026-11-26)
 

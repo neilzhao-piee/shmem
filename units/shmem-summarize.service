@@ -14,4 +14,10 @@ ExecStart=/usr/bin/python3 @SHMEM_ROOT@/tools/summarize-sessions.py
 #ExecStartPost=/bin/bash @SHMEM_ROOT@/tools/make-digest.sh
 # 3) refresh an agent-specific auto-injected block, e.g. for DSH:
 #ExecStartPost=/bin/bash @SHMEM_ROOT@/integrations/dsh/update-agents-block.sh
+# 4) full re-index carrying the vector layer: embeds only what the content-
+#    addressed emb_cache has never seen (seconds on a daily append), and keeps
+#    query-time embedding a pure budget-capped fallback. No-op on BM25-only
+#    installs — it only embeds when an endpoint is configured (env vars or
+#    <root>/.embed.json).
+#ExecStartPost=/usr/bin/python3 @SHMEM_ROOT@/tools/memory-search.py --full
 Nice=10

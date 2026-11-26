@@ -44,6 +44,32 @@ PR before writing it.
 - User-visible text stays bilingual-able: keep English output in tools; docs
   carry the Chinese translation in `README.zh.md`.
 
+## Releasing
+
+A release is five steps, and the last one has been forgotten four times
+(v0.5.0–v0.8.0 shipped as git tags only, so the repo's Releases panel sat on
+v0.4.0 for a week while `main` moved on — a tag is not a release, GitHub's
+UI and `/releases/latest` API only know the latter):
+
+1. Bump `__version__` in `shmem/__init__.py` (single source of truth;
+   `pyproject.toml` reads it dynamically — never duplicate the number).
+2. Add the `CHANGELOG.md` section for the version (Fixed / Changed / Added /
+   Measured, each claim carrying its evidence — production incident, test
+   name, or measured numbers).
+3. One `release: X.Y.Z — <summary>` commit, after the definition-of-done gates.
+4. Annotated tag with a summary of what changed and why:
+   `git tag -a vX.Y.Z -m "..."` and push the tag.
+5. **Create the GitHub Release** from the tag, with the CHANGELOG section as
+   the body — this is what users actually see:
+   ```sh
+   v=0.9.0   # the version without the leading v
+   notes=$(awk "/^## \[$v\]/{f=1;print;next} f&&/^## \[/{exit} f" CHANGELOG.md)
+   gh release create "v$v" --title "v$v" --notes "$notes"
+   ```
+
+Verify with `gh release view` or the `/releases/latest` API before closing
+the release work — the panel, not the tag list, is the published surface.
+
 ## Reporting issues
 
 Bugs: include the memory tree shape (file names, sizes) and the exact command.

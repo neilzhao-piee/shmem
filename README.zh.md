@@ -98,7 +98,7 @@ SHMEM_ROOT=~/my-memory shmem serve      # MCP stdio 服务，默认只读
 
 | 工具 | 干什么 | 依赖 |
 |---|---|---|
-| `tools/memory-search.py` | 对 markdown 建 FTS5 索引；**中文按字符二元组切分**（不依赖 jieba）；按内容哈希增量重建索引；返回片段 + 文件 + 行号；CLI **和** MCP stdio 服务两种面；可选向量层（RRF 融合，默认关）；MCP 写工具（三通道 + flock + secret guard）仅在 `--allow-write` 时开放 | Python 3 标准库 |
+| `tools/memory-search.py` | 对 markdown 建 FTS5 索引；**中文按字符二元组切分**（不依赖 jieba）；按内容哈希增量重建索引；返回片段 + 文件 + 行号；CLI **和** MCP stdio 服务两种面；向量层（RRF 融合）在配置了 embedding 端点时自动开启（环境变量或树内 `.embed.json`），向量按内容寻址、追加只嵌新 chunk；MCP 写工具（三通道 + flock + secret guard）仅在 `--allow-write` 时开放 | Python 3 标准库 |
 | `tools/summarize-sessions.py` | 每日收割：增量扫描 agent 会话历史 → 模型抽取持久事实 → 在 `flock` 下追加进 `journal/`；质量闸门（≤6 行、不编日期、不含凭据模式、不含过程噪音——进度报告、对话回声、命令回显）；quiet guard + 去重（`SHMEM_QUIET_SECONDS`=600——仍在增长的会话结算后才摘要，逐字相同的块不再重复追加）；模型挂了退回关键词抽取；会话源可插拔（内置 DSH + hermes 两个 adapter） | Python 3 标准库 |
 | `tools/make-digest.sh` | 生成 `DIGEST.md`（≤9KB，按行截断）：INDEX 头部 + facts 速览 + 跨 journal 文件取最新 5 条自动摘要 + 最新私有记忆快照（旧文件回退） | bash + awk |
 | `integrations/dsh/update-agents-block.sh` | 在 DSH 的 `AGENTS.md` 标记区间里刷新自动注入块 | bash + awk |
@@ -125,7 +125,11 @@ SHMEM_ROOT=~/my-memory shmem serve      # MCP stdio 服务，默认只读
 ## 设计取舍与诚实的局限
 
 - **这个量级 BM25 够了。** 几 MB 的记忆，词法检索的精度通常压过大多数 embedding 方案，
-  而且零成本。向量层存在但默认关；语料超过 ~1MB 且中文短语召回明显掉时再开。
+  而且零成本。向量层（RRF 融合）只有在配好 embedding 端点时才自动开启——环境变量或
+  树内 `.embed.json`——且向量按内容寻址：journal 追加只嵌新 chunk，旧向量全部复用。
+  在 1MB / 约千 chunk 的生产语料上实测：召回两臂都是 21/21；融合把 top-1 从 13/21
+  提到 15/21、平均名次 1.75 → 1.45——是排序增益，不是召回增益。可用
+  `--no-vector` / `SHMEM_VECTOR=0` 强制关闭（评测 harness 默认钉死关闭以保证可复现）。
 - **journal 是可检索的，不是可读的。** 没人通读它，这正是目的。如果你发现自己在滚动
   journal，说明 `facts/` 里少了一条。
 - **单机。** `flock` 只在一个主机上串行化写入。跨机共享靠 git（当初选 markdown 就是为此），

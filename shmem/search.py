@@ -5,7 +5,10 @@ query-time recall.
 - Indexes the shmem root markdown (INDEX.md, facts/, journal/, inbox/) into SQLite FTS5.
 - CJK-friendly tokenizer: CJK runs become character bigrams (jieba-free), Latin words as-is.
   Plain FTS5 tokenizers split Chinese per character, which loses 2-3 char words.
-- Optional vector layer fused with BM25 by reciprocal rank fusion (off by default).
+- Vector layer fused with BM25 by reciprocal rank fusion — on whenever an embed
+  endpoint is configured (env vars or <root>/.embed.json); embeddings are
+  content-addressed so daily appends pay only their new chunks. --no-vector or
+  SHMEM_VECTOR=0 forces the BM25-only path.
 - Secret guard: chunks containing known credential values or obvious secret patterns are not indexed.
 - Two faces: CLI (for shell-capable agents) and MCP stdio server (for MCP-capable hosts).
 
@@ -23,6 +26,15 @@ Env:
                         be indexed, e.g. /home/me/.secrets:~/.api-key
   SHMEM_EMBED_BASE_URL  OpenAI-compatible embeddings base, e.g. http://127.0.0.1:11434/v1
   SHMEM_EMBED_MODEL     embedding model name
+                        (these two, or a <root>/.embed.json, are what turn the vector
+                        layer on; .embed.json holds {"base_url","model"} — endpoint
+                        only, non-secret. Keys, if any, go in env, never in the tree.)
+  SHMEM_VECTOR          0/off forces the BM25-only path, 1/on forces vector on;
+                        unset = auto from whether an endpoint is configured
+  SHMEM_EMBED_TIMEOUT   seconds to wait for one embed call (default 10; the query
+                        path fast-fails on a loaded/down host rather than hanging)
+  SHMEM_EMBED_QUERY_MAX max NEW (cache-miss) embeds one query may create (default
+                        4); cache hits are free, the backlog defers to the next sync
   SHMEM_EMBED_QUERY_PREFIX
                         instruction prefix prepended to QUERIES only (asymmetric
                         models, e.g. Qwen3-Embedding); empty = bare queries
@@ -49,13 +61,52 @@ except ImportError:
 
 SM = Path(os.environ.get("SHMEM_ROOT", os.getcwd())).resolve()
 DB = Path(os.environ.get("SHMEM_DB", str(SM / ".index" / "memory.db")))
-EMBED_BASE = os.environ.get("SHMEM_EMBED_BASE_URL", "")
-EMBED_MODEL = os.environ.get("SHMEM_EMBED_MODEL", "")
+
+
+def _embed_cfg():
+    # Tree-local embed config: the injected AGENTS.md commands carry no env vars,
+    # so "vector on by default" must be discoverable from the memory tree itself.
+    # <root>/.embed.json holds {"base_url": ..., "model": ...} — non-secret
+    # endpoint info only (this file is shared with every agent that reads the
+    # tree; api keys belong in SHMEM_EMBED_BASE_URL-style env vars). Env vars
+    # always win. The file is not markdown, so md_files() never indexes it.
+    try:
+        cfg = json.loads((SM / ".embed.json").read_text(encoding="utf-8"))
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+_EMBED_CFG = _embed_cfg()
+EMBED_BASE = os.environ.get("SHMEM_EMBED_BASE_URL") or _EMBED_CFG.get("base_url", "")
+EMBED_MODEL = os.environ.get("SHMEM_EMBED_MODEL") or _EMBED_CFG.get("model", "")
 # Official Qwen3-Embedding instruction wording; applied to queries only (see embed()).
-QUERY_PREFIX = os.environ.get(
-    "SHMEM_EMBED_QUERY_PREFIX",
-    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ")
-EMBED_MIN = float(os.environ.get("SHMEM_VECTOR_MIN", "0.45"))
+QUERY_PREFIX = os.environ.get("SHMEM_EMBED_QUERY_PREFIX",
+                              _EMBED_CFG.get("query_prefix",
+                                             "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "))
+EMBED_MIN = float(os.environ.get("SHMEM_VECTOR_MIN", _EMBED_CFG.get("min", "0.45")))
+# Fast-fail: the query path must not hang on a loaded/down embed host (fleet
+# lesson: a busy embed host answers in 30+ s or not at all).
+EMBED_TIMEOUT = int(os.environ.get("SHMEM_EMBED_TIMEOUT", "10"))
+# A query may create at most this many NEW embeddings (cache misses) before
+# deferring the rest to the scheduled re-index; cache hits are free and uncapped.
+# Without it, a first --vector query after a big journal day embeds every new
+# chunk inline (observed: 343 chunks, ~26 min, one blocked eval).
+EMBED_QUERY_MAX = int(os.environ.get("SHMEM_EMBED_QUERY_MAX", "4"))
+
+
+def vector_enabled():
+    """The vector layer is ON whenever an endpoint is configured — env or tree
+    config. SHMEM_VECTOR=0/off forces the BM25-only path (eval arms, degraded
+    embed host); =1/on forces on. Unset: enabled iff base_url+model resolve."""
+    flag = os.environ.get("SHMEM_VECTOR", "").strip().lower()
+    if flag in ("0", "off", "no", "false"):
+        return False
+    if flag in ("1", "on", "yes", "true"):
+        return True
+    return bool(EMBED_BASE and EMBED_MODEL)
+
+
 MAX_CHUNK_LINES = 30
 
 # Single source of truth for the version: the tag is cut at this value, the MCP
@@ -132,6 +183,9 @@ def chunk_file(path, secrets):
         yield path, start, len(lines), heading, "\n".join(chunk)
 
 
+SCHEMA_VERSION = 2  # 2: embeddings content-addressed in emb_cache(hash)
+
+
 def open_db():
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB)
@@ -139,40 +193,72 @@ def open_db():
     # same file; without these pragmas the loser of the race gets "database is locked".
     con.execute("PRAGMA busy_timeout=5000")
     con.execute("PRAGMA journal_mode=WAL")
+    # The index is derived and disposable (protocol): a db from an older schema
+    # is wiped and rebuilt rather than migrated — the same escape hatch that made
+    # the corrupt-fts5 incident of 2026-11-26 a shrug instead of an autopsy.
+    if con.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        for t in ("embed", "emb_cache", "fts", "docs", "files"):
+            try:
+                con.execute(f"DROP TABLE IF EXISTS {t}")
+            except sqlite3.OperationalError:
+                pass
+        con.execute("PRAGMA user_version=%d" % SCHEMA_VERSION)
     con.execute("""CREATE TABLE IF NOT EXISTS docs(
         id INTEGER PRIMARY KEY, path TEXT, start_line INT, end_line INT,
-        heading TEXT, text TEXT, mtime REAL, sha TEXT)""")
+        heading TEXT, text TEXT, mtime REAL, sha TEXT, chash TEXT)""")
     con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(tokens, heading, tokenize='unicode61')")
-    con.execute("CREATE TABLE IF NOT EXISTS embed(doc_id INTEGER PRIMARY KEY, vec BLOB)")
+    # Content-addressed embedding cache: the vector is keyed by the sha256 of the
+    # exact text sent to the endpoint (text[:1500]), NOT by doc_id. Chunk rowids
+    # churn every re-index and paths move during refactors, but the same text
+    # earns the same vector forever — a journal append re-embeds its few new
+    # chunks instead of the file's whole history (measured: 343 chunks ~26 min
+    # re-embedded for one daily append). Cache rows are never dropped by
+    # remove_indexed; the corpus churns slowly and 1000 vectors are ~10 MB.
+    con.execute("CREATE TABLE IF NOT EXISTS emb_cache(hash TEXT PRIMARY KEY, vec BLOB)")
     con.execute("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, hash TEXT, mtime REAL)")
     return con
 
 
+def chunk_hash(text):
+    return hashlib.sha256(text[:1500].encode("utf-8")).hexdigest()
+
+
 def remove_indexed(con, path):
-    """Drop all index rows for one file path. Returns the number of chunks removed."""
+    """Drop all index rows for one file path. Returns the number of chunks removed.
+
+    The embedding CACHE stays: vectors belong to texts, not to files."""
     ids = [r[0] for r in con.execute("SELECT id FROM docs WHERE path=?", (path,)).fetchall()]
     if ids:
         con.executemany("DELETE FROM fts WHERE rowid=?", ((i,) for i in ids))
-        con.executemany("DELETE FROM embed WHERE doc_id=?", ((i,) for i in ids))
     con.execute("DELETE FROM docs WHERE path=?", (path,))
     return len(ids)
 
 
-def index_file(con, path, secrets, vector=False):
+def index_file(con, path, secrets, vector=False, embed_budget=None):
+    """(Re-)index one file. embed_budget caps NEW embeds (None = unlimited,
+    used by the scheduled/pipeline syncs; queries pass EMBED_QUERY_MAX).
+    Returns (chunks_indexed, new_embeds_used)."""
     raw = path.read_bytes()
     h = hashlib.sha256(raw).hexdigest()
     mtime = path.stat().st_mtime
-    # Embed BEFORE touching the db: the embed loop is network-bound (seconds per
-    # chunk), and doing it inside the write transaction holds the sqlite writer
-    # lock across every HTTP round-trip — concurrent searches then either fail
-    # with "database is locked" or, on a --full rebuild, see a half-empty index.
     chunks = list(chunk_file(path, secrets))
-    vecs = {}
-    if vector and EMBED_BASE and EMBED_MODEL:
-        for i, (_p, _s, _e, _h, text) in enumerate(chunks):
-            v = embed(text)
+    hashes = {i: chunk_hash(text) for i, (_p, _s, _e, _h, text) in enumerate(chunks)}
+    have = {r[0] for r in con.execute(
+        "SELECT hash FROM emb_cache WHERE hash IN (%s)" % ",".join("?" * len(hashes)),
+        tuple(hashes.values())).fetchall()} if hashes else set()
+    todo = [i for i, hh in hashes.items() if hh not in have] if vector else []
+    # Embed BEFORE touching the db: the embed loop is network-bound, and doing it
+    # inside the write transaction holds the sqlite writer lock across every HTTP
+    # round-trip (the 2026-11-26 prod incident that starved live search).
+    vecs, used = {}, 0
+    if todo:
+        for i in todo:
+            if embed_budget is not None and used >= embed_budget:
+                break  # defer the rest to the scheduled vector sync
+            v = embed(chunks[i][4])
             if v:
                 vecs[i] = v
+                used += 1
     con.execute("INSERT OR REPLACE INTO files(path,hash,mtime) VALUES(?,?,?)", (str(path), h, mtime))
     remove_indexed(con, str(path))
     n = 0
@@ -181,14 +267,14 @@ def index_file(con, path, secrets, vector=False):
         toks = " ".join(tokenize(text))
         if not toks:
             continue
-        cur = con.execute("INSERT INTO docs(path,start_line,end_line,heading,text,mtime,sha) VALUES(?,?,?,?,?,?,?)",
-                          (str(p), s, e, heading, text, mtime, sha))
+        cur = con.execute("INSERT INTO docs(path,start_line,end_line,heading,text,mtime,sha,chash) VALUES(?,?,?,?,?,?,?,?)",
+                          (str(p), s, e, heading, text, mtime, sha, hashes[i]))
         con.execute("INSERT INTO fts(rowid, tokens, heading) VALUES(?,?,?)", (cur.lastrowid, toks, heading))
         n += 1
         if i in vecs:
-            con.execute("INSERT OR REPLACE INTO embed(doc_id, vec) VALUES(?,?)",
-                        (cur.lastrowid, struct.pack(f"{len(vecs[i])}f", *vecs[i])))
-    return n
+            con.execute("INSERT OR IGNORE INTO emb_cache(hash, vec) VALUES(?,?)",
+                        (hashes[i], struct.pack(f"{len(vecs[i])}f", *vecs[i])))
+    return n, used
 
 
 def md_files():
@@ -198,11 +284,16 @@ def md_files():
             if ".index" not in p.parts and p.name != "DIGEST.md"]
 
 
-def sync(con, vector=False):
+def sync(con, vector=None, embed_budget=None):
     """Index files that changed and prune files that vanished since the last run.
 
     Renamed or deleted markdown must not leave ghost chunks behind: search results
-    that point at paths which no longer exist are worse than a cache miss."""
+    that point at paths which no longer exist are worse than a cache miss.
+
+    vector=None resolves via vector_enabled() — the vector layer rides along
+    whenever an embed endpoint is configured, so a plain sync no longer silently
+    strips embeds (the pre-0.9 trap: the daily query path quietly deleted the
+    vectors built by --rebuild --vector)."""
     on_disk = {str(p) for p in md_files()}
     changed = [p for p in md_files()
                if (row := con.execute("SELECT hash FROM files WHERE path=?", (str(p),)).fetchone()) is None
@@ -210,24 +301,32 @@ def sync(con, vector=False):
     gone = [r[0] for r in con.execute("SELECT path FROM files").fetchall() if r[0] not in on_disk]
     if not changed and not gone:
         return 0, 0
+    if vector is None:
+        vector = vector_enabled()
     secrets = cred_values()
     indexed = 0
     for path in gone:
         remove_indexed(con, path)
         con.execute("DELETE FROM files WHERE path=?", (path,))
     for path in changed:
-        indexed += index_file(con, path, secrets, vector)
+        n, _used = index_file(con, path, secrets, vector, embed_budget)
+        indexed += n
         con.commit()  # per-file: never hold the writer lock across the next file's embeds
     return indexed, len(gone)
 
 
-def rebuild(con, vector=False):
+def rebuild(con, vector=None):
+    """Full rebuild. The emb_cache deliberately SURVIVES it: vectors belong to
+    texts, and this is the path that refills whatever the cache lost."""
+    if vector is None:
+        vector = vector_enabled()
     secrets = cred_values()
-    con.execute("DELETE FROM docs"); con.execute("DELETE FROM fts"); con.execute("DELETE FROM embed")
+    con.execute("DELETE FROM docs"); con.execute("DELETE FROM fts"); con.execute("DELETE FROM files")
     con.commit()  # publish the wipe before the slow part; readers never wait on it
     n = 0
     for path in sorted(md_files()):
-        n += index_file(con, path, secrets, vector)
+        chunks, _used = index_file(con, path, secrets, vector)
+        n += chunks
         con.commit()
     return n
 
@@ -251,7 +350,7 @@ def embed(text, query=False):
             f"{EMBED_BASE.rstrip('/')}/embeddings",
             data=json.dumps({"model": EMBED_MODEL, "input": [text]}).encode(),
             headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=EMBED_TIMEOUT) as r:
             return json.load(r)["data"][0]["embedding"]
     except Exception as e:
         sys.stderr.write(f"embed failed: {e}\n")
@@ -273,12 +372,12 @@ def bm25(con, query, limit):
 
 
 def vector_recall(con, query, limit):
-    if not (EMBED_BASE and EMBED_MODEL):
+    if not vector_enabled():
         return []
     v = embed(query, query=True)
     if not v:
         return []
-    rows = con.execute("SELECT doc_id, vec FROM embed").fetchall()
+    rows = con.execute("SELECT d.id, c.vec FROM docs d JOIN emb_cache c ON c.hash=d.chash").fetchall()
     na = sum(a * a for a in v) ** .5
     if not na:
         return []
@@ -311,19 +410,21 @@ def doc_row(con, rid):
     return con.execute("SELECT path,start_line,end_line,heading,text FROM docs WHERE id=?", (rid,)).fetchone()
 
 
-def search(query, limit=8, vector=False, con=None):
+def search(query, limit=8, vector=None, con=None):
     own = con is None
     if own:
         con = open_db()
     try:
-        sync(con, vector)
-        # NOTE: with vector=True, sync embeds changed files at QUERY time — if a
-        # file grew since the last vector build (e.g. the journal gains an entry
-        # daily), the first --vector query pays ~4.5 s/chunk on the embed host
-        # before answering (observed: a 343-chunk journal blocked one eval for
-        # ~26 min). The cheap query path (vector=False) never blocks this way.
-        # The fix is to run the scheduled digest re-index with the embed env
-        # vars, not to drop embeds at query time; see ROADMAP item 18.
+        if vector is None:
+            vector = vector_enabled()
+        # Since 0.9.0 the query path may embed (vectors ride along whenever an
+        # endpoint is configured) but is BOUNDED: content-addressed cache means a
+        # daily journal append reuses every old chunk's vector and pays only the
+        # new chunks, and EMBED_QUERY_MAX caps the new embeds per query so even
+        # a first query after a huge day defers the backlog to the scheduled
+        # re-index instead of blocking (the 26-minute-eval incident of
+        # 2026-11-26 could not recur on this path).
+        sync(con, vector, embed_budget=EMBED_QUERY_MAX)
         bm = bm25(con, query, limit)
         vv = vector_recall(con, query, limit) if vector else []
         ids = fuse(bm, vv, limit * 2) if vv else [(rid, 1.0 / (i + 1)) for i, (rid, _s) in enumerate(bm)]
@@ -351,7 +452,7 @@ def search(query, limit=8, vector=False, con=None):
 def stats(con):
     n = con.execute("SELECT count(*) FROM docs").fetchone()[0]
     files = con.execute("SELECT count(DISTINCT path) FROM docs").fetchone()[0]
-    emb = con.execute("SELECT count(*) FROM embed").fetchone()[0]
+    emb = con.execute("SELECT count(*) FROM emb_cache").fetchone()[0]
     stale = []
     for p in sorted((SM / "inbox").rglob("*.md")):
         age = (now().timestamp() - p.stat().st_mtime) / 86400
@@ -438,7 +539,7 @@ def channel_write(con, kind, args):
                 f.write(payload)
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
-    sync(con)  # incremental re-index of the changed file only
+    sync(con, embed_budget=EMBED_QUERY_MAX)  # incremental; embed capped like queries
     return True, f"wrote {target.relative_to(SM)}"
 
 
@@ -504,10 +605,10 @@ def _mcp_loop(con, allow_write=False):
             name = msg.get("params", {}).get("name")
             args = msg.get("params", {}).get("arguments", {})
             if name == "memory_search":
-                res = search(args.get("query", ""), int(args.get("limit", 8)), vector=False, con=con)
+                res = search(args.get("query", ""), int(args.get("limit", 8)), con=con)
                 content = json.dumps(res, ensure_ascii=False, indent=1)
             elif name == "memory_stats":
-                sync(con)
+                sync(con, embed_budget=EMBED_QUERY_MAX)
                 content = json.dumps(stats(con), ensure_ascii=False)
             elif name in ("memory_write", "memory_append", "inbox_write"):
                 if not allow_write:
@@ -530,7 +631,10 @@ def main(argv=None):
     ap.add_argument("query", nargs="?", help="query text (CJK ok)")
     ap.add_argument("-n", "--limit", type=int, default=8)
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--vector", action="store_true", help="fuse BM25 with vector recall (needs SHMEM_EMBED_BASE_URL/SHMEM_EMBED_MODEL)")
+    ap.add_argument("--vector", dest="vector", action="store_true", default=None,
+                    help="force vector fusion on (endpoint from env or <root>/.embed.json)")
+    ap.add_argument("--no-vector", dest="vector", action="store_false",
+                    help="force the BM25-only path (also SHMEM_VECTOR=0)")
     ap.add_argument("--rebuild", action="store_true", help="incremental: re-index files changed since last index")
     ap.add_argument("--full", action="store_true", help="drop the index and rebuild from scratch")
     ap.add_argument("--stats", action="store_true")

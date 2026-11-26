@@ -10,10 +10,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 QUERIES="${QUERIES:-eval/queries.tsv}"
 MEMROOT="${ROOT:-examples}"
-# SHMEM_VECTOR=1 fuses the vector layer (needs SHMEM_EMBED_BASE_URL/SHMEM_EMBED_MODEL
-# AND an index already carrying embed rows: build it once with
-# tools/memory-search.py --full --vector first). Off by default, like the layer.
-VECTOR_ARGS=()
+# SHMEM_VECTOR=1 fuses the vector layer (endpoint from env or <root>/.embed.json;
+# tools/memory-search.py --full then embeds automatically when one is configured).
+# The harness PINS the default to --no-vector so recall numbers stay reproducible
+# regardless of what config discovery would auto-enable on a real tree.
+VECTOR_ARGS=(--no-vector)
 [ "${SHMEM_VECTOR:-0}" = 1 ] && VECTOR_ARGS=(--vector)
 pass=0; fail=0
 while IFS=$'\t' read -r q expected; do

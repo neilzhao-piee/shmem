@@ -106,7 +106,7 @@ keeps working through `tools/`, which are shims into the package.
 
 | tool | what it does | deps |
 |---|---|---|
-| `tools/memory-search.py` | FTS5 index over the markdown; **CJK character-bigram tokenizer** (no jieba); incremental re-index by content hash; returns snippets with file + line numbers; deterministic tie-break (`path,start_line`, not rowid) + per-file cap of 2 in the result window; derived `DIGEST.md` is excluded from the index; CLI **and** MCP stdio server; optional vector layer (RRF fusion, off by default); MCP write tools (three channels, flock, secret guard) only with `--allow-write` | Python 3 stdlib |
+| `tools/memory-search.py` | FTS5 index over the markdown; **CJK character-bigram tokenizer** (no jieba); incremental re-index by content hash; returns snippets with file + line numbers; deterministic tie-break (`path,start_line`, not rowid) + per-file cap of 2 in the result window; derived `DIGEST.md` is excluded from the index; CLI **and** MCP stdio server; vector layer (RRF fusion) auto-enabled when an embed endpoint is configured (env or `<root>/.embed.json`), embeddings content-addressed so appends pay only new chunks; MCP write tools (three channels, flock, secret guard) only with `--allow-write` | Python 3 stdlib |
 | `tools/summarize-sessions.py` | daily harvest: incremental scan of agent session history → model extracts durable facts → appended to `journal/` under `flock`; quality gate (≤6 lines, no invented dates, no credential patterns, no process chatter — progress talk, transcript echoes, shell echoes); quiet guard + dedup (`SHMEM_QUIET_SECONDS`=600 — growing sessions are summarized only after they settle, identical blocks are never re-appended); keyword fallback when the model is down; pluggable session adapters (DSH + hermes included) | Python 3 stdlib |
 | `tools/make-digest.sh` | builds `DIGEST.md` (≤9KB, line-boundary budget): INDEX structure slice + facts section map + 5 newest auto-summaries across journal files + newest private-memory snapshot (older-file fallback); header carries `health-check.py --oneline` | bash + awk |
 | `integrations/dsh/update-agents-block.sh` | refreshes the auto-injected block in DSH's `AGENTS.md` between markers | bash + awk |
@@ -136,9 +136,14 @@ nothing is hardcoded.
 ## Design notes & honest limits
 
 - **BM25 is enough at this scale.** For a few MB of memory, lexical search beats most
-  embedding setups on precision and costs nothing. The vector layer exists and is off by
-  default; turn it on if the corpus grows past ~1 MB and CJK phrase recall measurably
-  degrades.
+  embedding setups on precision and costs nothing. The vector layer (RRF fusion) turns
+  itself on only when an embedding endpoint is configured — env vars or a
+  `<root>/.embed.json` — and embeddings are content-addressed, so a journal append
+  reuses every old chunk's vector and pays only for the new ones. Measured on the
+  1 MB / ~1000-chunk production corpus: recall 21/21 either way; fusion moved top-1
+  from 13/21 to 15/21 and mean rank 1.75 → 1.45 — a ranking win, not a recall win.
+  Opt out with `--no-vector` / `SHMEM_VECTOR=0` (the eval harness pins it off for
+  reproducibility).
 - **The journal is searchable, not readable.** Nobody reads it whole; that's the point.
   If you find yourself scrolling, your `facts/` file is missing an entry.
 - **Single machine.** `flock` serializes writers on one host. Cross-host sharing works

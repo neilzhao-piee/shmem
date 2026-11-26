@@ -380,8 +380,11 @@ class ShmemTest(unittest.TestCase):
         self.addCleanup(con.close)
         for doc_id, cos in ((1, 1.0), (2, 0.707), (3, 0.17)):  # unit vec at angle to query
             ang = math.acos(cos)
-            con.execute("INSERT INTO embed(doc_id, vec) VALUES(?,?)",
-                        (doc_id, struct.pack("2f", math.cos(ang), math.sin(ang))))
+            chash = "h%d" % doc_id
+            con.execute("INSERT INTO docs(id,path,start_line,end_line,heading,text,mtime,sha,chash) "
+                        "VALUES(?,?,-1,-1,'','doc',0,'',?)", (doc_id, "j/2026-01.md", chash))
+            con.execute("INSERT INTO emb_cache(hash, vec) VALUES(?,?)",
+                        (chash, struct.pack("2f", math.cos(ang), math.sin(ang))))
         con.commit()
         old = (shmem.EMBED_BASE, shmem.EMBED_MODEL, shmem.embed)
         try:
@@ -392,6 +395,101 @@ class ShmemTest(unittest.TestCase):
             (shmem.EMBED_BASE, shmem.EMBED_MODEL, shmem.embed) = old
         self.assertEqual(sorted(hits), [1, 2])  # 0.17 < EMBED_MIN 0.45: dropped
         self.assertAlmostEqual(hits[1], 1.0, places=5)
+
+    def _fake_embed(self, calls):
+        def fake(text, query=False):
+            calls.append(text)
+            return [1.0, 0.0]
+        return fake
+
+    def _stub_embed_endpoint(self, calls):
+        """Point the module at a fake endpoint; returns a restore closure."""
+        old = (shmem.EMBED_BASE, shmem.EMBED_MODEL, shmem.embed)
+        shmem.EMBED_BASE, shmem.EMBED_MODEL = "http://x.invalid/v1", "m"
+        shmem.embed = self._fake_embed(calls)
+        self.addCleanup(lambda: setattr(shmem, "EMBED_BASE", old[0])
+                        or setattr(shmem, "EMBED_MODEL", old[1])
+                        or setattr(shmem, "embed", old[2]))
+
+    def test_embed_cache_reuses_vectors_across_appends(self):
+        # Content-addressed embeddings (0.9.0): vectors belong to texts. A journal
+        # append must re-embed ONLY the new chunks — the pre-0.9 behavior re-embedded
+        # the whole file (one daily entry = 343 chunks = ~26 min of embed calls).
+        f = shmem.SM / "journal" / "2026-01.md"
+        f.parent.mkdir(parents=True)
+        f.write_text("alpha alpha section\n\nbeta beta section\n", encoding="utf-8")
+        calls = []
+        self._stub_embed_endpoint(calls)
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        shmem.sync(con, vector=True)
+        self.assertEqual(len(calls), 2)
+        f.write_text(f.read_text(encoding="utf-8") + "\ngamma gamma section\n", encoding="utf-8")
+        calls.clear()
+        shmem.sync(con, vector=True)
+        self.assertEqual(len(calls), 1)  # only the appended chunk is new
+        calls.clear()
+        shmem.rebuild(con, vector=True)
+        self.assertEqual(calls, [])  # a full rebuild survives entirely on the cache
+
+    def test_embed_budget_bounds_one_sync(self):
+        # A query embeds at most EMBED_QUERY_MAX new chunks; the backlog is
+        # picked up by the next rebuild, never blocking the caller (incident
+        # class: first vector query after a big journal day).
+        f = shmem.SM / "big.md"
+        f.write_text("\n\n".join("block%d zzq wv%d" % (i, i) for i in range(6)),
+                     encoding="utf-8")
+        calls = []
+        self._stub_embed_endpoint(calls)
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        shmem.sync(con, vector=True, embed_budget=2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(con.execute("SELECT count(*) FROM emb_cache").fetchone()[0], 2)
+        shmem.rebuild(con, vector=True)  # the scheduled pipeline picks up the backlog
+        self.assertEqual(con.execute("SELECT count(*) FROM emb_cache").fetchone()[0], 6)
+
+    def test_shmem_vector_zero_forces_bm25_only(self):
+        # The eval's BM25 arm and a degraded embed host: with SHMEM_VECTOR=0 not
+        # one embed call may happen even when an endpoint is configured.
+        f = shmem.SM / "a.md"
+        f.write_text("alpha alpha fact\n", encoding="utf-8")
+        calls = []
+        self._stub_embed_endpoint(calls)
+        os.environ["SHMEM_VECTOR"] = "0"
+        self.addCleanup(os.environ.pop, "SHMEM_VECTOR")
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        self.assertTrue(shmem.search("alpha", con=con))
+        self.assertEqual(calls, [])
+
+    def test_embed_config_discovered_from_tree(self):
+        # <root>/.embed.json makes "vector on when configured" true for plain
+        # agent commands that carry no env vars (the AGENTS.md search line).
+        (shmem.SM / ".embed.json").write_text(
+            '{"base_url": "http://cfg.invalid/v1", "model": "m"}', encoding="utf-8")
+        self.assertEqual(shmem._embed_cfg().get("base_url"), "http://cfg.invalid/v1")
+        # a dotfile json is not markdown — it must never be indexed itself
+        self.assertNotIn(shmem.SM / ".embed.json", [p for p in shmem.md_files()])
+
+    def test_old_schema_db_is_wiped_not_migrated(self):
+        # The index is derived state (protocol): a v1 database (embed-by-doc_id)
+        # must be wiped and rebuilt, not crash on a missing column.
+        import sqlite3
+        shmem.DB.parent.mkdir(parents=True, exist_ok=True)
+        con0 = sqlite3.connect(shmem.DB)
+        con0.execute("""CREATE TABLE docs(id INTEGER PRIMARY KEY, path TEXT, start_line INT,
+            end_line INT, heading TEXT, text TEXT, mtime REAL, sha TEXT)""")
+        con0.execute("CREATE VIRTUAL TABLE fts USING fts5(tokens, heading, tokenize='unicode61')")
+        con0.execute("CREATE TABLE embed(doc_id INTEGER PRIMARY KEY, vec BLOB)")
+        con0.execute("CREATE TABLE files(path TEXT PRIMARY KEY, hash TEXT, mtime REAL)")
+        con0.commit()
+        con0.close()
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        self.assertEqual(con.execute("PRAGMA user_version").fetchone()[0], shmem.SCHEMA_VERSION)
+        (shmem.SM / "a.md").write_text("fresh after the schema bump\n", encoding="utf-8")
+        self.assertTrue(shmem.search("fresh", con=con))
 
     def test_clean_facts_drops_process_chatter(self):
         raw = "\n".join([

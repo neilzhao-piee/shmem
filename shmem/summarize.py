@@ -14,7 +14,12 @@ Session sources are pluggable adapters; two are included out of the box:
 To add another agent, write a generator that yields
     (session_key, change_marker, title, transcript, "YYYY-MM-DD")
 and register it in SOURCES below. change_marker should be a value that changes
-whenever the session grows (mtime:size, highest message id, ...).
+whenever the session grows (mtime:size, highest message id, ...) AND it must lead
+with the session's last-activity epoch ("<epoch>:<id>") — the quiet guard
+(SHMEM_QUIET_SECONDS) parses that first field, so an adapter without it
+re-summarizes an active session on every run: observed in production, where
+bare message-id markers made the daily backfill re-spend model calls on the
+same growing sessions, pass after pass.
 
 Scheduled by a systemd user timer (see units/shmem-summarize.timer) or any cron.
 """
@@ -252,8 +257,21 @@ def hermes_sessions():
                 lines.append("assistant: %s" % txt[:300])
         if lines:
             date = datetime.fromtimestamp(r["last_activity_at"], TZ).strftime("%Y-%m-%d")
-            yield r["id"], str(max_id), r["title"] or first_user[:120], "\n".join(lines), date
+            # epoch-prefixed marker: the quiet guard then covers hermes too —
+            # a bare max_id made active hermes sessions reprocess every run.
+            yield r["id"], "%d:%d" % (int(r["last_activity_at"] or 0), max_id), r["title"] or first_user[:120], "\n".join(lines), date
     con.close()
+
+
+def marker_equivalent(prev, marker):
+    """One migration rule: old hermes states stored the bare message-id marker.
+    The new form prefixes it with the activity epoch; the session has NOT grown,
+    so migrating the marker in place must not spend a second model call."""
+    if prev is None:
+        return False
+    if prev == marker:
+        return True
+    return str(prev).isdigit() and str(marker).split(":")[-1] == str(prev)
 
 
 SOURCES = (("dsh", dsh_sessions), ("hermes", hermes_sessions))
@@ -399,6 +417,9 @@ def main(argv=None):
                 break
             sid = "%s:%s" % (agent, key)
             if state.get(sid) == marker:
+                continue
+            if marker_equivalent(state.get(sid), marker):
+                state[sid] = marker  # legacy marker format; session unchanged
                 continue
             if quiet_skip(marker):
                 continue  # still growing; marker not advanced, picked up next run

@@ -153,6 +153,39 @@ class ShmemTest(unittest.TestCase):
         self.assertFalse(summ.quiet_skip("%d:100" % (int(now) - 3600), now))
         self.assertFalse(summ.quiet_skip("42", now))  # non-mtime marker: not guarded
 
+    def test_legacy_marker_migration_costs_no_model_call(self):
+        # Production: 75 hermes states carried bare message-id markers, so the
+        # quiet guard never applied and the daily run re-summarized growing
+        # sessions pass after pass. The new marker prefixes the same id with the
+        # activity epoch — equivalence must be judged on the id, not the string.
+        self.assertTrue(summ.marker_equivalent("6552", "1764000000:6552"))
+        self.assertFalse(summ.marker_equivalent("6552", "1764000000:6553"))  # grew
+        self.assertFalse(summ.marker_equivalent(None, "1764000000:6552"))    # new session
+
+    def test_hermes_marker_leads_with_activity_epoch(self):
+        import sqlite3
+        db = Path(self.tmp.name) / "state.db"
+        con = sqlite3.connect(db)
+        con.executescript(
+            "create table sessions(id text, title text, last_activity_at int, archived int, hidden int);"
+            "create table messages(session_id text, role text, content text, id int, active int);")
+        con.execute("insert into sessions values('s1','t',1700000000,0,0)")
+        con.execute("insert into messages values('s1','user','%s',1,1)"
+                    % ("decided to deploy at port 8080, root cause was stale config. " * 15))
+        con.commit()
+        con.close()
+        old = os.environ.get("HERMES_STATE_DB")
+        os.environ["HERMES_STATE_DB"] = str(db)
+        try:
+            rows = list(summ.hermes_sessions())
+        finally:
+            if old is None:
+                del os.environ["HERMES_STATE_DB"]
+            else:
+                os.environ["HERMES_STATE_DB"] = old
+        self.assertTrue(rows, "adapter should yield the session")
+        self.assertRegex(rows[0][1], r"^1700000000:\d+$")  # quiet-guardable marker
+
     def test_dedup_identical_block(self):
         journal = shmem.SM / "journal" / "2026-10.md"
         journal.parent.mkdir(parents=True, exist_ok=True)

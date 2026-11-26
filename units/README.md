@@ -73,3 +73,15 @@ Whichever install you chose, the proof is the journal, not the timer state: the 
 make stats                     # index size + stalled inbox deliveries
 make summarize                 # run it by hand, same path the timer takes
 ```
+
+## A backfill loop cannot converge on a live host
+
+Running `make summarize` repeatedly "until processed=0" never terminates while
+you are working: your own session files keep growing, and sessions of other
+live agents reappear every pass too. That is correct behaviour — those sessions
+are still moving. Judge backfill convergence by the state count
+(`.summarize-state.json` stops growing) and by `shmem health`, not by
+`processed=0` on the last pass. The quiet guard (`SHMEM_QUIET_SECONDS`) defers
+still-growing sessions; it covers every adapter because adapter markers lead
+with the last-activity epoch — a bare counter marker (the pre-0.7.0 hermes
+form) silently opted out of the guard and re-spent model calls each run.

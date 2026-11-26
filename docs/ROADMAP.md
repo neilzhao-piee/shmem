@@ -144,15 +144,29 @@ eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
     prints a marker (`[…truncated — see INDEX.md]`, journal pointers for the
     tail sections); three tests pin marker-on-cut, marker-on-snapshot-cut, and
     no false marker when nothing was cut.
-18. **Measured 2026-11-26: no-vector baseline 21/21 on the real tree; the
-    with-vector number is BLOCKED on infrastructure.** The claim above that an
-    "embedding endpoint is live" was wrong — probed: `192.168.1.45:8080` serves
-    chat only (`/v1/embeddings` → not found), no ollama anywhere on the LAN.
-    The A/B is one command when an endpoint exists:
-    `SHMEM_EMBED_BASE_URL=… SHMEM_EMBED_MODEL=… QUERIES=eval/queries.shmem.tsv
-    ROOT=/root/shared-memory bash eval/run.sh`. **Vector default stays OFF** —
-    no measured gain exists yet, and the external survey argues for measuring,
-    not growing, the vector layer.
+18. **DONE (measurement) 2026-11-26: vector arm measured, default stays OFF.**
+    The earlier claim in this item that no embedding endpoint exists on the
+    LAN was WRONG — probed only .45/ollama and missed it: `192.168.1.21:8085`
+    (systemd `llama-embed.service`, llama.cpp, Qwen3-Embedding-4B-Q8_0, 2560
+    dim, n_ctx 4096) has served OpenAI-style `/v1/embeddings` since 2026-11-06
+    and our own `facts/models.md` documented it the whole time — fleet facts
+    beat raw port-scanning. A/B on the prod tree (1032 chunks fully embedded;
+    build ~75 min at ~4.5 s/chunk on the CPU-only host; query cost +~0.5 s):
+    recall 21/21 both arms (BM25 already saturates these queries), ranking
+    improves: top-1 13/21 → 14/21, mean rank 1.75 → 1.45 (5 up, 1 down).
+    But the negative probe (`zzqx qvuxpl` → expect []) REGRESSES with fusion:
+    vector_recall returns top-k neighbours for any query, garbage included.
+    Verdict: no recall gain to flip on, and a threshold gap to fix first.
+    **Vector default stays OFF.** If ever enabled: add a cosine floor in
+    `vector_recall`, and feed env vars into the daily digest re-index so
+    changed files keep their embeds (a vector-less sync silently drops them).
+    Side effects of the run, both real bugs now fixed (commit `0ecd4fc`):
+    `index_file` embedded inside the sqlite write txn (held the writer lock
+    across ~1000 HTTP round-trips and starved prod search), and `eval/run.sh`
+    gained `SHMEM_VECTOR=1` — the command above could not actually fuse the
+    vector arm without it. The prod index db also had a corrupt fts5 table
+    (bulk DELETE/DROP failed); quarantined as `.index/memory.db.broken-*`,
+    rebuilt — the index is derived and disposable, this is what that buys.
 19. **Git backstore for the memory tree (decision, not a feature).** The
     authoritative markdown has no history — today's fleet split needed a
     hand-written zero-loss verification script because there was no

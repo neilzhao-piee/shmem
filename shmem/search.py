@@ -23,6 +23,12 @@ Env:
                         be indexed, e.g. /home/me/.secrets:~/.api-key
   SHMEM_EMBED_BASE_URL  OpenAI-compatible embeddings base, e.g. http://127.0.0.1:11434/v1
   SHMEM_EMBED_MODEL     embedding model name
+  SHMEM_EMBED_QUERY_PREFIX
+                        instruction prefix prepended to QUERIES only (asymmetric
+                        models, e.g. Qwen3-Embedding); empty = bare queries
+  SHMEM_VECTOR_MIN      cosine floor for vector hits (default 0.45, calibrated
+                        for Qwen3-Embedding-4B with the default prefix —
+                        re-calibrate if you change model or prefix)
 """
 import argparse
 import hashlib
@@ -45,6 +51,11 @@ SM = Path(os.environ.get("SHMEM_ROOT", os.getcwd())).resolve()
 DB = Path(os.environ.get("SHMEM_DB", str(SM / ".index" / "memory.db")))
 EMBED_BASE = os.environ.get("SHMEM_EMBED_BASE_URL", "")
 EMBED_MODEL = os.environ.get("SHMEM_EMBED_MODEL", "")
+# Official Qwen3-Embedding instruction wording; applied to queries only (see embed()).
+QUERY_PREFIX = os.environ.get(
+    "SHMEM_EMBED_QUERY_PREFIX",
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ")
+EMBED_MIN = float(os.environ.get("SHMEM_VECTOR_MIN", "0.45"))
 MAX_CHUNK_LINES = 30
 
 # Single source of truth for the version: the tag is cut at this value, the MCP
@@ -221,12 +232,24 @@ def rebuild(con, vector=False):
     return n
 
 
-def embed(text):
+def embed(text, query=False):
+    # Qwen3-Embedding (the fleet's endpoint) is trained asymmetrically: passages
+    # are embedded bare, queries carry an instruction prefix. Embedding queries
+    # bare leaves an anisotropy floor — measured 2026-11-26, gibberish queries
+    # scored up to 0.52 cosine against real chunks, so no similarity floor can
+    # separate them. With the official instruction the same gibberish tops out
+    # at 0.39 while real queries keep >= 0.55, which is what EMBED_MIN below
+    # calibrates against. The pairing is model-specific: change the model or
+    # the prefix and re-calibrate the floor. Set SHMEM_EMBED_QUERY_PREFIX=""
+    # for models that want bare queries.
+    text = text[:1500]
+    if query and QUERY_PREFIX:
+        text = QUERY_PREFIX + text
     import urllib.request
     try:
         req = urllib.request.Request(
             f"{EMBED_BASE.rstrip('/')}/embeddings",
-            data=json.dumps({"model": EMBED_MODEL, "input": [text[:1500]]}).encode(),
+            data=json.dumps({"model": EMBED_MODEL, "input": [text]}).encode(),
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.load(r)["data"][0]["embedding"]
@@ -252,21 +275,26 @@ def bm25(con, query, limit):
 def vector_recall(con, query, limit):
     if not (EMBED_BASE and EMBED_MODEL):
         return []
-    v = embed(query)
+    v = embed(query, query=True)
     if not v:
         return []
     rows = con.execute("SELECT doc_id, vec FROM embed").fetchall()
+    na = sum(a * a for a in v) ** .5
+    if not na:
+        return []
     scored = []
     for doc_id, blob in rows:
         vec = struct.unpack(f"{len(blob) // 4}f", blob)
         if len(vec) != len(v):
             continue
-        dot = sum(a * b for a, b in zip(v, vec))
-        na = sum(a * a for a in v) ** .5
         nb = sum(b * b for b in vec) ** .5
-        if na and nb:
-            scored.append((doc_id, dot / (na * nb)))
+        if nb:
+            cos = sum(a * b for a, b in zip(v, vec)) / (na * nb)
+            if cos >= EMBED_MIN:  # floor: below it the "match" is anisotropy noise,
+                scored.append((doc_id, cos))  # not signal (calibration: see EMBED_MIN)
     scored.sort(key=lambda x: -x[1])
+    # Empty result is a feature: search() then falls back to BM25 alone, so a
+    # query nothing is close to returns what BM25 honestly has — or nothing.
     return scored[:limit * 3]
 
 
@@ -289,6 +317,13 @@ def search(query, limit=8, vector=False, con=None):
         con = open_db()
     try:
         sync(con, vector)
+        # NOTE: with vector=True, sync embeds changed files at QUERY time — if a
+        # file grew since the last vector build (e.g. the journal gains an entry
+        # daily), the first --vector query pays ~4.5 s/chunk on the embed host
+        # before answering (observed: a 343-chunk journal blocked one eval for
+        # ~26 min). The cheap query path (vector=False) never blocks this way.
+        # The fix is to run the scheduled digest re-index with the embed env
+        # vars, not to drop embeds at query time; see ROADMAP item 18.
         bm = bm25(con, query, limit)
         vv = vector_recall(con, query, limit) if vector else []
         ids = fuse(bm, vv, limit * 2) if vv else [(rid, 1.0 / (i + 1)) for i, (rid, _s) in enumerate(bm)]

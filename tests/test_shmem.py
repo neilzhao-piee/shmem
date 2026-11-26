@@ -370,6 +370,29 @@ class ShmemTest(unittest.TestCase):
         self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertGreaterEqual(con.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
 
+    def test_vector_floor_drops_anisotropy_noise(self):
+        # 2026-11-26 A/B: bare-query cosine has an anisotropy floor — gibberish
+        # scored up to 0.52 against real chunks, so vector recall answered every
+        # query (the negative probe `zzqx qvuxpl` returned chunks). vector_recall
+        # must drop hits below EMBED_MIN; empty means search() uses BM25 alone.
+        import struct, math
+        con = shmem.open_db()
+        self.addCleanup(con.close)
+        for doc_id, cos in ((1, 1.0), (2, 0.707), (3, 0.17)):  # unit vec at angle to query
+            ang = math.acos(cos)
+            con.execute("INSERT INTO embed(doc_id, vec) VALUES(?,?)",
+                        (doc_id, struct.pack("2f", math.cos(ang), math.sin(ang))))
+        con.commit()
+        old = (shmem.EMBED_BASE, shmem.EMBED_MODEL, shmem.embed)
+        try:
+            shmem.EMBED_BASE, shmem.EMBED_MODEL = "http://x.invalid/v1", "m"
+            shmem.embed = lambda text, query=False: [1.0, 0.0]
+            hits = dict(shmem.vector_recall(con, "anything", 8))
+        finally:
+            (shmem.EMBED_BASE, shmem.EMBED_MODEL, shmem.embed) = old
+        self.assertEqual(sorted(hits), [1, 2])  # 0.17 < EMBED_MIN 0.45: dropped
+        self.assertAlmostEqual(hits[1], 1.0, places=5)
+
     def test_clean_facts_drops_process_chatter(self):
         raw = "\n".join([
             "- CRM gate layer shipped in 7956fb9, deployed and verified.",

@@ -157,9 +157,16 @@ eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
     But the negative probe (`zzqx qvuxpl` → expect []) REGRESSES with fusion:
     vector_recall returns top-k neighbours for any query, garbage included.
     Verdict: no recall gain to flip on, and a threshold gap to fix first.
-    **Vector default stays OFF.** If ever enabled: add a cosine floor in
-    `vector_recall`, and feed env vars into the daily digest re-index so
-    changed files keep their embeds (a vector-less sync silently drops them).
+    **Vector default stays OFF.** The floor prerequisite is since DONE:
+    queries carry the Qwen3 instruction prefix and `vector_recall` drops
+    cosines below `SHMEM_VECTOR_MIN` (0.45; calibrated on the prod index:
+    gibberish <=0.39 vs real queries >=0.55, the bare-query anisotropy floor
+    of 0.52 made separation impossible). Re-measured: recall 21/21 both arms,
+    top-1 15/21, mean rank 1.45, negative probe now correctly empty. Still
+    open before any default flip: feed the embed env vars into the daily
+    digest re-index, or a vector-less sync silently drops embeds (and a
+    --vector query then re-embeds the day's journal at ~4.5 s/chunk before
+    answering).
     Side effects of the run, both real bugs now fixed (commit `0ecd4fc`):
     `index_file` embedded inside the sqlite write txn (held the writer lock
     across ~1000 HTTP round-trips and starved prod search), and `eval/run.sh`

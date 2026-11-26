@@ -104,11 +104,31 @@ def load_state():
 
 
 def save_state(state):
+    # Atomic replace: a kill landing mid-write must never leave truncated json
+    # behind — load_state reads that as {} and every session gets re-summarized,
+    # which is exactly the disaster per-session saving exists to prevent.
     try:
-        with open(STATE, "w", encoding="utf-8") as fh:
+        tmp = STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(state, fh)
+        os.replace(tmp, STATE)
     except Exception as exc:
         log("state write failed: %s" % exc)
+
+
+def mark_done(state, sid, marker):
+    """Advance a session's marker and commit it to disk immediately.
+
+    2026-11-26 production: a run killed by its own timeout had appended journal
+    blocks for 12 sessions but persisted no markers (save_state used to run only
+    at the very end), so the next pass re-summarized all of them — and because
+    the model is not deterministic, the near-duplicate blocks missed the
+    exact-text dedup; 8 duplicates had to be removed by hand. Every marker
+    advance is now its own save. The journal is written BEFORE the marker, so
+    the worst remaining race is one session wide: a kill between block-append
+    and marker-save re-summarizes just the session in flight."""
+    state[sid] = marker
+    save_state(state)
 
 
 def quiet_skip(marker, now=None):
@@ -419,12 +439,12 @@ def main(argv=None):
             if state.get(sid) == marker:
                 continue
             if marker_equivalent(state.get(sid), marker):
-                state[sid] = marker  # legacy marker format; session unchanged
+                mark_done(state, sid, marker)  # legacy marker format; session unchanged
                 continue
             if quiet_skip(marker):
                 continue  # still growing; marker not advanced, picked up next run
             if len(transcript) < MIN_CONTENT_CHARS:
-                state[sid] = marker
+                mark_done(state, sid, marker)
                 continue
             if ENDPOINT and MODEL:
                 try:
@@ -437,11 +457,12 @@ def main(argv=None):
             facts = clean_facts(facts_text, date)
             if not facts:
                 facts = clean_facts(heuristic(transcript), date)
-            state[sid] = marker
             processed += 1
             if not facts or facts.strip().upper() == "NONE":
+                mark_done(state, sid, marker)  # looked at, nothing durable; commit the marker
                 continue
             if written + len(facts) > MAX_OUTPUT_BYTES:
+                mark_done(state, sid, marker)
                 break
             safe_title = clean_title(SECRET_RE.sub("[redacted]", topic or title or key))
             # Keyword-fallback output must announce itself in the journal, not just in
@@ -452,7 +473,8 @@ def main(argv=None):
             block = "\n### auto-summary%s · %s · %s · %s\n%s\n" % (tag, date, agent, safe_title, facts)
             key_block = block.lstrip("\n")
             if key_block in seen:
-                continue  # identical facts already delivered
+                mark_done(state, sid, marker)  # identical facts already delivered
+                continue
             seen.add(key_block)
             with open(LOCK, "w") as lf:
                 flock(lf, LOCK_EX)
@@ -461,10 +483,10 @@ def main(argv=None):
                         fh.write(block)
                 finally:
                     flock(lf, LOCK_UN)
+            mark_done(state, sid, marker)  # only after the block is on disk
             written += len(facts)
             log("%s %s %s (%d chars)" % (agent, key, how, len(facts)))
 
-    save_state(state)
     if written:
         try:
             subprocess.run(["bash", os.path.join(ROOT, "tools", "make-digest.sh")], timeout=20)

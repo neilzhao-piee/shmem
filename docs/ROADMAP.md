@@ -177,14 +177,20 @@ eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
     pre-commit check). Parking-lot rule says promote at the first unrecoverable
     manual edit; consider deciding early, the split was one edit away from
     needing it.
-20. **Summarizer state is saved only at run end.** Hit live on 2026-11-26: a
-    run killed by its own timeout after 12 sessions had written journal blocks
-    but persisted no marker, so the next pass re-summarized the same sessions —
-    and since the model is not deterministic, the near-duplicates missed the
-    exact-text dedup. Eight duplicate auto-summary blocks had to be removed
-    from `journal/2026-11.md` by hand.
-    *Fix:* save the state file after each session (cheap, stdlib json), not
-    once per run; assert it in a test that aborts mid-run.
+20. **DONE 2026-11-26 — state now commits per session.** Hit live on 2026-11-26:
+    a run killed by its own timeout after 12 sessions had written journal
+    blocks but persisted no marker, so the next pass re-summarized the same
+    sessions — and since the model is not deterministic, the near-duplicates
+    missed the exact-text dedup. Eight duplicate auto-summary blocks had to be
+    removed from `journal/2026-11.md` by hand.
+    *Fix:* `mark_done` persists the marker on every marker advance (journal
+    block first, marker second, so the worst remaining race is ONE session
+    wide instead of the whole run); `save_state` writes atomically via
+    tmp+rename — a kill mid-write must not leave truncated json, which
+    load_state would read as `{}` and re-summarize everything, the very
+    disaster this saves against. Test pins it: run killed mid-way (session 2
+    raises), session 1's block and marker are both on disk, and the resume run
+    asks the model only about session 2.
 
 ## External context (surveyed 2026-11-26)
 

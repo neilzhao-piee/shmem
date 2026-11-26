@@ -228,6 +228,59 @@ class ShmemTest(unittest.TestCase):
         text = (jr / ("%s.md" % __import__("datetime").datetime.now(summ.TZ).strftime("%Y-%m"))).read_text(encoding="utf-8")
         self.assertIn("### auto-summary (LOW-QUALITY fallback) · 2026-11-20 · dsh · title", text)
 
+    def test_state_committed_per_session_survives_mid_run_kill(self):
+        # 2026-11-26 production: a run killed by its own timeout after 12 sessions
+        # had written journal blocks but persisted NO marker (state was saved only
+        # at the very end), so the next pass re-summarized everything; model
+        # non-determinism made the near-duplicates miss the exact-text dedup.
+        # Markers must reach disk as each session finishes, before any later
+        # session can be killed.
+        old = (summ.ROOT, summ.STATE, summ.LOG, summ.ENDPOINT, summ.MODEL, summ.SOURCES, summ.ask_model)
+        calls = {"n": 0}
+        try:
+            jr = shmem.SM / "journal"
+            jr.mkdir(parents=True, exist_ok=True)
+            summ.ROOT = str(shmem.SM)
+            summ.STATE = str(shmem.SM / ".state.json")
+            summ.LOG = str(shmem.SM / ".log")
+            summ.ENDPOINT, summ.MODEL = "http://x.invalid/v1/chat/completions", "m"
+            transcript = "\n".join("决定 部署到 /srv/app 端口 8080 commit abc%03d" % i for i in range(30))
+
+            def sessions():
+                yield ("s1", "1700000001:1", "t1", transcript, "2026-11-20")
+                yield ("s2", "1700000002:2", "t2", transcript, "2026-11-20")
+
+            def flaky(transcript_, date):
+                calls["n"] += 1
+                if calls["n"] > 1:
+                    raise KeyboardInterrupt("killed by timeout")  # not caught by the fallback handler
+                return "TOPIC: t1\n- 部署到 /srv/app 端口 8080 commit abc001"
+
+            summ.SOURCES = (("dsh", sessions),)
+            summ.ask_model = flaky
+            state_file = summ.STATE
+            self.assertRaises(KeyboardInterrupt, summ.main, [])
+            # session 1 finished: its block AND its marker are on disk…
+            month = __import__("datetime").datetime.now(summ.TZ).strftime("%Y-%m")
+            self.assertTrue((jr / ("%s.md" % month)).exists())
+            self.assertEqual(calls["n"], 2)
+            state = json.loads(Path(summ.STATE).read_text(encoding="utf-8"))
+            self.assertEqual(state, {"dsh:s1": "1700000001:1"})
+            # …so resuming must not ask the model about s1 a second time.
+            state_calls = {"n": 0}
+
+            def counting(transcript_, date):
+                state_calls["n"] += 1
+                return "TOPIC: t2\n- 部署到 /srv/app 端口 8080 commit abc002"
+
+            summ.ask_model = counting
+            summ.main([])
+        finally:
+            (summ.ROOT, summ.STATE, summ.LOG, summ.ENDPOINT, summ.MODEL, summ.SOURCES, summ.ask_model) = old
+        self.assertEqual(state_calls["n"], 1)  # only the never-marked s2 re-entered
+        state = json.loads(Path(state_file).read_text(encoding="utf-8"))
+        self.assertEqual(sorted(state), ["dsh:s1", "dsh:s2"])
+
 
     def run_agents_block(self, journals):
         jr = shmem.SM / "journal"

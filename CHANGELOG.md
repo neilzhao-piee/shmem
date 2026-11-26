@@ -3,6 +3,49 @@
 Notable changes per release. shmem adheres to semantic versioning; the protocol
 itself evolves only through explicit `PROTOCOL.md` revisions.
 
+## [0.8.0] - 2026-11-26
+
+### Fixed
+- **The vector build no longer starves search** (`shmem/search.py`).
+  Production incident 2026-11-26: `index_file` made the per-chunk HTTP embed
+  call INSIDE the open sqlite write transaction, so a `--full --vector` build
+  of the real tree (1032 chunks, ~75 min on a CPU-only embed host) held the
+  writer lock across ~1000 network round-trips — concurrent searches were
+  starved (prod eval measured 1/21 mid-build). Embedding now happens before
+  any db write for that file, and `sync()`/`rebuild()` commit per file
+  (rebuild also publishes the wipe before the slow part).
+- **Summarizer state commits per session** (`shmem/summarize.py`, ROADMAP
+  item 20). A timeout-killed run had appended 12 journal blocks but persisted
+  no markers (state was saved once at run end); the next pass re-summarized
+  everything and model non-determinism made the near-duplicates miss the
+  exact-text dedup — 8 duplicate blocks removed by hand. Every marker advance
+  now goes through `mark_done()`, saving immediately; the journal block is
+  written BEFORE the marker, so the worst remaining race is one session.
+  `save_state()` became an atomic tmp+rename — truncated json from a
+  mid-write kill used to load as `{}` and re-summarize the world, exactly
+  the disaster the per-session save exists to prevent. Test pins the resume:
+  a run killed between sessions must leave the finished session's block AND
+  marker on disk, and the resume may not ask the model about it again.
+
+### Changed
+- `eval/run.sh` gains `SHMEM_VECTOR=1` to pass `--vector` at query time —
+  the A/B command recorded in docs/ROADMAP.md could not actually enable
+  fusion without it (fusion is a query-time flag, not an index-time one).
+
+### Measured
+- Vector layer A/B closed (ROADMAP item 18): an embeddings endpoint DOES
+  exist — `192.168.1.21:8085`, llama.cpp Qwen3-Embedding-4B-Q8_0, live since
+  2026-11-06 and documented in the fleet's own facts; the earlier claim here
+  that "no embeddings endpoint exists on this network" was a bad probe, and
+  the lesson is recorded: check the fleet facts before raw port-scanning.
+  Full prod A/B (1032 chunks embedded): recall 21/21 in BOTH arms — BM25
+  already saturates the real query set — ranking improves (top-1 13/21 →
+  14/21, mean rank 1.75 → 1.45), but the negative probe regresses under
+  fusion (vector_recall has no similarity floor). No recall gain to flip on:
+  **vector default stays OFF**, now backed by measurement. If ever enabled:
+  add a cosine floor to `vector_recall` and feed the embed env vars into the
+  daily digest re-index (a vector-less sync silently drops embeds).
+
 ## [0.7.0] - 2026-11-26
 
 ### Fixed

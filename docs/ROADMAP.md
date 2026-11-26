@@ -162,11 +162,15 @@ eval probe-hygiene guard. The production tree split `fleet.md` (100 KB) into
     cosines below `SHMEM_VECTOR_MIN` (0.45; calibrated on the prod index:
     gibberish <=0.39 vs real queries >=0.55, the bare-query anisotropy floor
     of 0.52 made separation impossible). Re-measured: recall 21/21 both arms,
-    top-1 15/21, mean rank 1.45, negative probe now correctly empty. Still
-    open before any default flip: feed the embed env vars into the daily
-    digest re-index, or a vector-less sync silently drops embeds (and a
-    --vector query then re-embeds the day's journal at ~4.5 s/chunk before
-    answering).
+    top-1 15/21, mean rank 1.45, negative probe now correctly empty. The
+    last prerequisite is also CLOSED (v0.9.0): the daily pipeline now ends
+    with a vector-carrying `--full` re-index, embeddings are content-addressed
+    so appends pay only new chunks, and query-time embedding is budget-capped
+    (4 new embeds/query, 10 s timeout) — the ~4.5 s/chunk re-embed-before-
+    answering failure mode is structurally gone. **Default flipped ON**
+    (`vector_enabled()` auto-resolves from env or tree-local `.embed.json`);
+    prod rollout 2026-11-26: rebuild 23 s / 5 new embeds, plain query 0.57 s,
+    both eval arms 21/21.
     Side effects of the run, both real bugs now fixed (commit `0ecd4fc`):
     `index_file` embedded inside the sqlite write txn (held the writer lock
     across ~1000 HTTP round-trips and starved prod search), and `eval/run.sh`
